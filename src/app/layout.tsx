@@ -12,8 +12,10 @@ import "@fontsource/syne/800.css";
 
 import "@/app/globals.css";
 import { getPublicEnv } from "@/lib/env";
-import { JetBrains_Mono } from "next/font/google";
+import { JetBrains_Mono, Figtree } from "next/font/google";
 import { cn } from "@/lib/utils";
+
+const figtree = Figtree({subsets:['latin'],variable:'--font-sans'});
 
 const jetbrainsMono = JetBrains_Mono({subsets:['latin'],variable:'--font-mono'});
 
@@ -49,7 +51,7 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html lang="en" className={cn("font-mono", jetbrainsMono.variable)}>
+    <html lang="en" className={cn( jetbrainsMono.variable, "font-sans", figtree.variable)}>
       <body>{children}</body>
     </html>
   );
