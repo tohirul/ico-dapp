@@ -1,231 +1,266 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-/*//////////////////////////////////////////////////////////////
-                            IMPORTS
-//////////////////////////////////////////////////////////////*/
+/* ───────────────── IMPORTS ───────────────── */
 
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/*//////////////////////////////////////////////////////////////
-                        CONTRACT
-//////////////////////////////////////////////////////////////*/
+/* ───────────────── INTERFACES ───────────────── */
 
-contract TreasuryVault is ReentrancyGuard {
+interface ITreasuryCallable {
+    function treasuryCall(bytes calldata data) external returns (bytes memory);
+}
+
+/* ───────────────── CONTRACT ───────────────── */
+
+contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
-    /*//////////////////////////////////////////////////////////////
-                            CONSTANTS
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── ROLES ───────────────── */
 
-    uint256 public constant MAX_BATCH = 50;
+    bytes32 public constant OPERATOR_ROLE  = keccak256("OPERATOR_ROLE");
+    bytes32 public constant EXECUTOR_ROLE  = keccak256("EXECUTOR_ROLE");
+    bytes32 public constant ALLOCATOR_ROLE = keccak256("ALLOCATOR_ROLE");
 
-    /*//////////////////////////////////////////////////////////////
-                            ROLES
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── ALLOWLISTS ───────────────── */
 
-    address public immutable timelock;
+    mapping(address => bool) public approvedTargets;
+    mapping(address => bool) public approvedRecipients;
 
-    /*//////////////////////////////////////////////////////////////
-                        ACCOUNTING
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── ACCOUNTING ───────────────── */
 
-    uint256 public totalETHReceived;
-    uint256 public totalETHWithdrawn;
+    uint256 public totalETHOut;
+    uint256 public totalERC20Out;
+    uint256 public totalAllocatedETH;
+    uint256 public totalAllocatedERC20;
 
-    mapping(address => uint256) public totalTokenReceived;
-    mapping(address => uint256) public totalTokenWithdrawn;
+    uint256 public executionNonce;
 
-    /*//////////////////////////////////////////////////////////////
-                            EVENTS
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── LIMITS ───────────────── */
 
-    event ETHReceived(address indexed from, uint256 amount);
-    event TokenReceived(address indexed token, address indexed from, uint256 amount);
+    uint256 public maxTxValue;
+    uint256 public dailyLimit;
 
-    event ETHWithdrawn(address indexed to, uint256 amount);
-    event TokenWithdrawn(address indexed token, address indexed to, uint256 amount);
+    uint256 public spentToday;
+    uint256 public lastReset;
 
-    event BatchExecuted(uint256 operations);
+    /* ───────────────── WITHDRAW MODEL ───────────────── */
 
-    /*//////////////////////////////////////////////////////////////
-                            MODIFIER
-    //////////////////////////////////////////////////////////////*/
+    mapping(address => uint256) public pendingWithdrawals;
 
-    modifier onlyTimelock() {
-        require(msg.sender == timelock, "NOT_TIMELOCK");
-        _;
+    /* ───────────────── MODES ───────────────── */
+
+    bool public allocatorOnlyMode;
+
+    /* ───────────────── EVENTS ───────────────── */
+
+    event Executed(uint256 indexed nonce, address indexed target);
+    event PendingWithdrawal(address indexed to, uint256 amount);
+    event Withdrawn(address indexed user, uint256 amount);
+
+    event ETHAllocated(address indexed to, uint256 amount);
+    event ERC20Allocated(address indexed token, address indexed to, uint256 amount);
+
+    event ETHTransferred(address indexed to, uint256 amount);
+    event ERC20Transferred(address indexed token, address indexed to, uint256 amount);
+
+    event TargetApproved(address target, bool status);
+    event RecipientApproved(address recipient, bool status);
+
+    event LimitsUpdated(uint256 maxTx, uint256 daily);
+    event AllocatorModeUpdated(bool enabled);
+
+    event Deposit(address indexed from, uint256 amount);
+
+    /* ───────────────── CONSTRUCTOR ───────────────── */
+
+    constructor(address admin) {
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(OPERATOR_ROLE, admin);
+        _grantRole(EXECUTOR_ROLE, admin);
+
+        lastReset = block.timestamp;
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        CONSTRUCTOR
-    //////////////////////////////////////////////////////////////*/
-
-    constructor(address _timelock) {
-        require(_timelock != address(0), "ZERO_TIMELOCK");
-        timelock = _timelock;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        ETH RECEIPT
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── RECEIVE ───────────────── */
 
     receive() external payable {
-        require(msg.value > 0, "ZERO_VALUE");
-
-        totalETHReceived += msg.value;
-
-        emit ETHReceived(msg.sender, msg.value);
+        emit Deposit(msg.sender, msg.value);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        TOKEN DEPOSIT (OPTIONAL TRACKED)
-    //////////////////////////////////////////////////////////////*/
+    function depositETH() external payable {
+    emit Deposit(msg.sender, msg.value);
+}
 
-    function depositToken(address token, uint256 amount) external nonReentrant {
-        require(token != address(0), "ZERO_TOKEN");
-        require(amount > 0, "ZERO_AMOUNT");
+    /* ───────────────── ALLOWLIST MANAGEMENT ───────────────── */
 
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-
-        totalTokenReceived[token] += amount;
-
-        emit TokenReceived(token, msg.sender, amount);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        INTERNAL TRANSFERS
-    //////////////////////////////////////////////////////////////*/
-
-    function _sendETH(address to, uint256 amount) internal {
-        (bool success, ) = to.call{value: amount}("");
-        require(success, "ETH_FAIL");
-    }
-
-    function _sendToken(IERC20 token, address to, uint256 amount) internal {
-        token.safeTransfer(to, amount);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        WITHDRAW ETH
-    //////////////////////////////////////////////////////////////*/
-
-    function withdrawETH(address to, uint256 amount)
+    function setApprovedTarget(address target, bool status)
         external
-        onlyTimelock
-        nonReentrant
+        onlyRole(OPERATOR_ROLE)
     {
-        require(to != address(0), "ZERO_TO");
-        require(amount > 0, "ZERO_AMOUNT");
-
-        uint256 bal = address(this).balance;
-        require(bal >= amount, "INSUFFICIENT");
-
-        totalETHWithdrawn += amount;
-
-        _sendETH(to, amount);
-
-        emit ETHWithdrawn(to, amount);
+        require(target != address(0), "Zero address");
+        approvedTargets[target] = status;
+        emit TargetApproved(target, status);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        WITHDRAW TOKEN
-    //////////////////////////////////////////////////////////////*/
-
-    function withdrawToken(
-        address token,
-        address to,
-        uint256 amount
-    ) external onlyTimelock nonReentrant {
-        require(token != address(0), "ZERO_TOKEN");
-        require(to != address(0), "ZERO_TO");
-        require(amount > 0, "ZERO_AMOUNT");
-
-        IERC20 erc20 = IERC20(token);
-
-        uint256 bal = erc20.balanceOf(address(this));
-        require(bal >= amount, "INSUFFICIENT");
-
-        totalTokenWithdrawn[token] += amount;
-
-        _sendToken(erc20, to, amount);
-
-        emit TokenWithdrawn(token, to, amount);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        BATCH EXECUTION (DAO READY)
-    //////////////////////////////////////////////////////////////*/
-
-    struct Operation {
-        uint8 opType; // 1 = ETH, 2 = TOKEN
-        address token;
-        address to;
-        uint256 amount;
-    }
-
-    function executeBatch(Operation[] calldata ops)
+    function setApprovedRecipient(address user, bool approved)
         external
-        onlyTimelock
-        nonReentrant
+        onlyRole(OPERATOR_ROLE)
     {
-        uint256 len = ops.length;
-        require(len > 0 && len <= MAX_BATCH, "INVALID_BATCH");
+        require(user != address(0), "Zero address");
+        approvedRecipients[user] = approved;
+        emit RecipientApproved(user, approved);
+    }
 
-        for (uint256 i = 0; i < len; i++) {
-            Operation calldata op = ops[i];
+    /* ───────────────── LIMIT CONTROL ───────────────── */
 
-            if (op.opType == 1) {
-                // ETH
-                require(address(this).balance >= op.amount, "ETH_LOW");
+    function setLimits(uint256 _maxTx, uint256 _daily)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        maxTxValue = _maxTx;
+        dailyLimit = _daily;
+        emit LimitsUpdated(_maxTx, _daily);
+    }
 
-                totalETHWithdrawn += op.amount;
-                _sendETH(op.to, op.amount);
+    function _enforceLimits(uint256 amount) internal {
+        require(amount <= maxTxValue, "Tx limit");
 
-                emit ETHWithdrawn(op.to, op.amount);
-
-            } else if (op.opType == 2) {
-                // TOKEN
-                IERC20 token = IERC20(op.token);
-
-                uint256 bal = token.balanceOf(address(this));
-                require(bal >= op.amount, "TOKEN_LOW");
-
-                totalTokenWithdrawn[op.token] += op.amount;
-                _sendToken(token, op.to, op.amount);
-
-                emit TokenWithdrawn(op.token, op.to, op.amount);
-
-            } else {
-                revert("INVALID_OP");
-            }
+        if (block.timestamp > lastReset + 1 days) {
+            spentToday = 0;
+            lastReset = block.timestamp;
         }
 
-        emit BatchExecuted(len);
+        require(spentToday + amount <= dailyLimit, "Daily limit");
+
+        spentToday += amount;
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        VIEW HELPERS
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── EXECUTION ENGINE (SAFE) ───────────────── */
 
-    function getETHBalance() external view returns (uint256) {
-        return address(this).balance;
-    }
-
-    function getTokenBalance(address token)
+    function execute(
+        address target,
+        bytes calldata data
+    )
         external
-        view
-        returns (uint256)
+        nonReentrant
+        whenNotPaused
+        onlyRole(EXECUTOR_ROLE)
+        returns (bytes memory)
     {
-        return IERC20(token).balanceOf(address(this));
+        require(!allocatorOnlyMode, "Allocator only");
+        require(approvedTargets[target], "Target not approved");
+
+        uint256 nonce = executionNonce++;
+
+        // 🔒 NO ETH allowed in execution
+        (bool success, bytes memory result) =
+            target.call(data);
+
+        require(success, "Execution failed");
+
+        emit Executed(nonce, target);
+
+        return result;
     }
 
-    function netETH() external view returns (uint256) {
-        return totalETHReceived - totalETHWithdrawn;
+    /* ───────────────── ETH FLOW (PULL MODEL) ───────────────── */
+
+    function transferETH(address to, uint256 amount)
+        external
+        onlyRole(EXECUTOR_ROLE)
+        whenNotPaused
+    {
+        require(!allocatorOnlyMode, "Allocator only");
+        require(approvedRecipients[to], "Recipient not approved");
+
+        _enforceLimits(amount);
+
+        pendingWithdrawals[to] += amount;
+
+        totalETHOut += amount;
+
+        emit PendingWithdrawal(to, amount);
     }
 
-    function netToken(address token) external view returns (uint256) {
-        return totalTokenReceived[token] - totalTokenWithdrawn[token];
+    function allocatorTransferETH(address to, uint256 amount)
+        external
+        onlyRole(ALLOCATOR_ROLE)
+        whenNotPaused
+    {
+        require(approvedRecipients[to], "Recipient not approved");
+
+        _enforceLimits(amount);
+
+        pendingWithdrawals[to] += amount;
+
+        totalAllocatedETH += amount;
+
+        emit ETHAllocated(to, amount);
+    }
+
+    function withdrawPending() external nonReentrant {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        require(amount > 0, "Nothing to withdraw");
+
+        pendingWithdrawals[msg.sender] = 0;
+
+        (bool ok, ) = payable(msg.sender).call{value: amount}("");
+        require(ok, "Withdraw failed");
+
+        emit Withdrawn(msg.sender, amount);
+    }
+
+    /* ───────────────── ERC20 FLOW ───────────────── */
+
+    function transferERC20(address token, address to, uint256 amount)
+        external
+        onlyRole(EXECUTOR_ROLE)
+        whenNotPaused
+    {
+        require(!allocatorOnlyMode, "Allocator only");
+        require(approvedRecipients[to], "Recipient not approved");
+
+        IERC20(token).safeTransfer(to, amount);
+
+        totalERC20Out += amount;
+
+        emit ERC20Transferred(token, to, amount);
+    }
+
+    function allocatorTransferERC20(address token, address to, uint256 amount)
+        external
+        onlyRole(ALLOCATOR_ROLE)
+        whenNotPaused
+    {
+        require(approvedRecipients[to], "Recipient not approved");
+
+        IERC20(token).safeTransfer(to, amount);
+
+        totalAllocatedERC20 += amount;
+
+        emit ERC20Allocated(token, to, amount);
+    }
+
+    /* ───────────────── ADMIN ───────────────── */
+
+    function setAllocatorOnlyMode(bool enabled)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        allocatorOnlyMode = enabled;
+        emit AllocatorModeUpdated(enabled);
+    }
+
+    function pause() external onlyRole(OPERATOR_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(OPERATOR_ROLE) {
+        _unpause();
     }
 }

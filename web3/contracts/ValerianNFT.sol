@@ -47,6 +47,9 @@ contract ValerianNFT is ERC1155, Ownable, ReentrancyGuard, INFTBoost {
     mapping(address => uint256) private activeCoupon;
 
     address public staking;
+    
+    // Whitelist for approved staking contracts
+    mapping(address => bool) public isApprovedStaking;
 
     /*//////////////////////////////////////////////////////////////
                             EVENTS
@@ -56,14 +59,15 @@ contract ValerianNFT is ERC1155, Ownable, ReentrancyGuard, INFTBoost {
     event CouponConsumed(address indexed user, uint256 id);
     event CouponInvalidated(address indexed user, uint256 id);
     event CouponReplaced(address indexed user, uint256 oldId, uint256 newId);
-    event StakingSet(address staking);
+    event StakingSet(address indexed staking);
+    event StakingApprovalUpdated(address indexed staking, bool status);
 
     /*//////////////////////////////////////////////////////////////
                             MODIFIER
     //////////////////////////////////////////////////////////////*/
 
     modifier onlyStaking() {
-        require(msg.sender == staking, "ONLY_STAKING");
+        require(msg.sender == staking && isApprovedStaking[staking], "ONLY_STAKING");
         _;
     }
 
@@ -80,7 +84,14 @@ contract ValerianNFT is ERC1155, Ownable, ReentrancyGuard, INFTBoost {
     function setStaking(address _staking) external onlyOwner {
         require(_staking != address(0), "ZERO");
         staking = _staking;
+        isApprovedStaking[_staking] = true;
         emit StakingSet(_staking);
+    }
+    
+    function approveStaking(address _staking, bool status) external onlyOwner {
+        require(_staking != address(0), "ZERO");
+        isApprovedStaking[_staking] = status;
+        emit StakingApprovalUpdated(_staking, status);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -113,14 +124,15 @@ contract ValerianNFT is ERC1155, Ownable, ReentrancyGuard, INFTBoost {
 
         uint256 oldId = activeCoupon[user];
 
+        // EFFECTS: Update state BEFORE external calls (Reentrancy protection)
+        uint256 id = nextId++;
+        activeCoupon[user] = id;
+        coupons[id] = Coupon(boostBps, expiry);
+
+        // INTERACTIONS: External calls AFTER state updates
         if (oldId != 0) {
             _clear(user, oldId);
         }
-
-        uint256 id = nextId++;
-
-        activeCoupon[user] = id;
-        coupons[id] = Coupon(boostBps, expiry);
 
         _mint(user, RECEIPT, 1, data);
 

@@ -229,18 +229,14 @@ pragma solidity ^0.8.26;
  * It is intended for production use only after proper testing, auditing, and ecosystem readiness.
  */
 
-/*//////////////////////////////////////////////////////////////
-                            IMPORTS
-//////////////////////////////////////////////////////////////*/
+/* ───────────────── IMPORTS ───────────────── */
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
-/*//////////////////////////////////////////////////////////////
-                        INTERFACES
-//////////////////////////////////////////////////////////////*/
+/* ───────────────── INTERFACES ───────────────── */
 
 interface IUniswapV2Router02 {
     function WETH() external pure returns (address);
@@ -252,71 +248,79 @@ interface IUniswapV2Router02 {
         address to,
         uint deadline
     ) external;
-
-    function addLiquidityETH(
-        address token,
-        uint amountTokenDesired,
-        uint amountTokenMin,
-        uint amountETHMin,
-        address to,
-        uint deadline
-    ) external payable;
-
-    function getAmountsOut(uint amountIn, address[] calldata path)
-        external
-        view
-        returns (uint[] memory amounts);
 }
 
-/*//////////////////////////////////////////////////////////////
-                        CONTRACT
-//////////////////////////////////////////////////////////////*/
+/* ───────────────── CONTRACT ───────────────── */
 
-contract Valerian is ERC20, Ownable, ReentrancyGuard {
+contract Valerian is ERC20, AccessControl, ReentrancyGuard, Pausable {
 
-    /*//////////////////////////////////////////////////////////////
-                            CONSTANTS
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── ROLES ───────────────── */
 
-    uint256 public constant DENOM = 10_000;
-    uint256 public constant MAX_FEE = 1_000;
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
-    /*//////////////////////////////////////////////////////////////
-                            CORE STATE
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── CONSTANTS ───────────────── */
 
-    IUniswapV2Router02 public immutable router;
-    address public immutable WETH;
-    address public treasury;
+    uint256 public constant MAX_FEE_BPS = 500;
+    uint256 public constant BPS_DENOM = 10_000;
 
-    /*//////////////////////////////////////////////////////////////
-                            FEES
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── FEES ───────────────── */
 
-    uint256 public buyFee = 300;
-    uint256 public sellFee = 500;
+    uint256 public buyFeeBps;
+    uint256 public sellFeeBps;
 
-    mapping(address => bool) public isFeeExempt;
-    mapping(address => bool) public isPair;
+    /* ───────────────── CORE ADDRESSES ───────────────── */
 
-    /*//////////////////////////////////////////////////////////////
-                            CONTROL
-    //////////////////////////////////////////////////////////////*/
+    address public treasuryVault;
+    address public immutable LP_RECEIVER;
 
-    bool public paused;
-    bool public swapEnabled = true;
+    IUniswapV2Router02 public router;
+    address public pair;
 
-    /*//////////////////////////////////////////////////////////////
-                        SWAP CONFIG
-    //////////////////////////////////////////////////////////////*/
-
-    bool private inSwap;
+    /* ───────────────── SWAP CONFIG ───────────────── */
 
     uint256 public swapThreshold;
     uint256 public minSwapAmount;
-    uint256 public swapCooldown = 10 minutes;
-    uint256 public lastSwapTime;
-    uint256 public maxSlippageBps = 500;
+    uint256 public maxSwapAmount;
+
+    uint256 public lastSwapBlock;
+    uint256 public maxPriceImpactBps = 300;
+
+    bool public swapEnabled = true;
+    bool private inSwap;
+
+    /* ───────────────── TREASURY LAYER (STRICT ESCROW) ───────────────── */
+
+    mapping(address => bool) public approvedVaults;
+
+    // ONLY source of truth for treasury funds
+    mapping(address => uint256) public vaultBalances;
+
+    /* ───────────────── ACCOUNTING ───────────────── */
+
+    uint256 public totalSwapped;
+    uint256 public totalETHSent;
+
+    /* ───────────────── EVENTS ───────────────── */
+
+    event FeesUpdated(uint256 buyFee, uint256 sellFee);
+    event SwapExecuted(uint256 tokens, uint256 ethReceived);
+
+    event VaultAccrued(address indexed vault, uint256 amount);
+    event VaultClaimed(address indexed vault, uint256 amount);
+    event VaultUpdated(address vault);
+    event VaultApproved(address vault, bool status);
+
+    event PairUpdated(address pair);
+    event RouterUpdated(address router);
+    event EmergencyPause(bool state);
+
+    /* ───────────────── MODIFIERS ───────────────── */
+
+    modifier antiMEV() {
+        require(block.number > lastSwapBlock, "MEV block");
+        _;
+        lastSwapBlock = block.number;
+    }
 
     modifier lockSwap() {
         inSwap = true;
@@ -324,73 +328,127 @@ contract Valerian is ERC20, Ownable, ReentrancyGuard {
         inSwap = false;
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        CONSTRUCTOR
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── CONSTRUCTOR ───────────────── */
 
     constructor(
         address _router,
-        address _treasury,
-        address _owner
-    )
-        ERC20("Valerian", "VAL")
-        Ownable(_owner)
-    {
-        require(_router != address(0), "INVALID_ROUTER");
-        require(_treasury != address(0), "INVALID_TREASURY");
+        address _vault,
+        address _lpReceiver
+    ) ERC20("Valerian", "VAL") {
+        require(_router != address(0), "Invalid router");
+        require(_vault != address(0), "Invalid vault");
+        require(_lpReceiver != address(0), "Invalid LP");
 
         router = IUniswapV2Router02(_router);
-        WETH = router.WETH();
-        treasury = _treasury;
+        treasuryVault = _vault;
+        LP_RECEIVER = _lpReceiver;
 
-        _mint(_owner, 1_000_000 * 1e18);
+        approvedVaults[_vault] = true;
 
-        swapThreshold = totalSupply() / 2000;
-        minSwapAmount = swapThreshold / 2;
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(OPERATOR_ROLE, msg.sender);
 
-        isFeeExempt[_owner] = true;
-        isFeeExempt[address(this)] = true;
+        _mint(msg.sender, 1_000_000 ether);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        CORE TRANSFER (OZ v5)
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── ADMIN ───────────────── */
+
+    function setVault(address _vault)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        require(_vault != address(0), "Zero vault");
+        require(_vault.code.length > 0, "Invalid vault");
+
+        treasuryVault = _vault;
+        approvedVaults[_vault] = true;
+
+        emit VaultUpdated(_vault);
+    }
+
+    function approveVault(address vault, bool status)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        require(vault != address(0), "Zero vault");
+
+        approvedVaults[vault] = status;
+
+        emit VaultApproved(vault, status);
+    }
+
+    function setRouter(address _router)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        require(_router != address(0), "Invalid router");
+        require(IUniswapV2Router02(_router).WETH() != address(0), "Bad router");
+
+        router = IUniswapV2Router02(_router);
+
+        emit RouterUpdated(_router);
+    }
+
+    function setPair(address _pair)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        require(_pair != address(0), "Zero pair");
+
+        pair = _pair;
+
+        emit PairUpdated(_pair);
+    }
+
+    function setFees(uint256 _buy, uint256 _sell)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        require(_buy <= MAX_FEE_BPS && _sell <= MAX_FEE_BPS, "Too high");
+
+        buyFeeBps = _buy;
+        sellFeeBps = _sell;
+
+        emit FeesUpdated(_buy, _sell);
+    }
+
+    function setSwapConfig(
+        uint256 _threshold,
+        uint256 _min,
+        uint256 _max
+    ) external onlyRole(OPERATOR_ROLE) {
+        require(_threshold >= _min, "Invalid threshold");
+        require(_max >= _min, "Invalid max");
+
+        swapThreshold = _threshold;
+        minSwapAmount = _min;
+        maxSwapAmount = _max;
+    }
+
+    function pause() external onlyRole(OPERATOR_ROLE) {
+        _pause();
+        emit EmergencyPause(true);
+    }
+
+    function unpause() external onlyRole(OPERATOR_ROLE) {
+        _unpause();
+        emit EmergencyPause(false);
+    }
+
+    /* ───────────────── TRANSFER LOGIC ───────────────── */
 
     function _update(
         address from,
         address to,
         uint256 amount
-    ) internal override {
+    ) internal override whenNotPaused {
 
-        // mint / burn
-        if (from == address(0) || to == address(0)) {
+        if (inSwap || from == address(0) || to == address(0)) {
             super._update(from, to, amount);
             return;
         }
 
-        require(from != address(0) && to != address(0), "ZERO");
-
-        if (paused) {
-            require(isFeeExempt[from] && isFeeExempt[to], "PAUSED");
-        }
-
-        // bypass
-        if (inSwap || isFeeExempt[from] || isFeeExempt[to]) {
-            super._update(from, to, amount);
-            return;
-        }
-
-        uint256 fee;
-
-        // BUY
-        if (isPair[from]) {
-            fee = (amount * buyFee) / DENOM;
-        }
-        // SELL
-        else if (isPair[to]) {
-            fee = (amount * sellFee) / DENOM;
-            _trySwap();
-        }
+        uint256 fee = _calculateFee(from, to, amount);
 
         if (fee > 0) {
             super._update(from, address(this), fee);
@@ -398,147 +456,109 @@ contract Valerian is ERC20, Ownable, ReentrancyGuard {
         }
 
         super._update(from, to, amount);
+
+        _maybeSwap();
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        SWAP ENGINE
-    //////////////////////////////////////////////////////////////*/
+    function _calculateFee(
+        address from,
+        address to,
+        uint256 amount
+    ) internal view returns (uint256) {
+        if (pair == address(0)) return 0;
 
-    function _trySwap() internal {
-        if (!swapEnabled) return;
-        if (inSwap) return;
-        if (block.timestamp < lastSwapTime + swapCooldown) return;
+        if (from == pair) {
+            return (amount * buyFeeBps) / BPS_DENOM;
+        }
+
+        if (to == pair) {
+            return (amount * sellFeeBps) / BPS_DENOM;
+        }
+
+        return 0;
+    }
+
+    /* ───────────────── SWAP ENGINE ───────────────── */
+
+    function _maybeSwap() internal {
+        if (!swapEnabled || inSwap) return;
 
         uint256 bal = balanceOf(address(this));
-        if (bal < swapThreshold || bal < minSwapAmount) return;
+        if (bal < swapThreshold) return;
 
-        lastSwapTime = block.timestamp;
+        uint256 amount = bal;
 
-        _executeSwap(swapThreshold);
+        if (amount > maxSwapAmount) amount = maxSwapAmount;
+        if (amount < minSwapAmount) return;
+
+        _swap(amount);
     }
 
-    function _executeSwap(uint256 amount) internal lockSwap nonReentrant {
-        uint256 half = amount / 2;
-        uint256 otherHalf = amount - half;
-
-        uint256 ethReceived = _swapForETH(half);
-        if (ethReceived == 0) return;
-
-        uint256 ethLP = ethReceived / 2;
-        uint256 ethTreasury = ethReceived - ethLP;
-
-        _addLiquidity(otherHalf, ethLP);
-
-        (bool ok, ) = treasury.call{value: ethTreasury}("");
-        require(ok, "TREASURY_FAIL");
-    }
-
-    function _swapForETH(uint256 amount) internal returns (uint256) {
-        if (amount == 0) return 0;
-
-        _approve(address(this), address(router), amount);
+    function _swap(uint256 tokenAmount)
+        internal
+        lockSwap
+        nonReentrant
+        antiMEV
+    {
+        _approve(address(this), address(router), tokenAmount);
 
         address[] memory path = new address[](2);
         path[0] = address(this);
-        path[1] = WETH;
-
-        uint256 expected;
-
-        try router.getAmountsOut(amount, path) returns (uint[] memory amounts) {
-            expected = amounts[1];
-        } catch {
-            return 0;
-        }
-
-        if (expected == 0) return 0;
-
-        uint256 minOut = (expected * (DENOM - maxSlippageBps)) / DENOM;
+        path[1] = router.WETH();
 
         uint256 beforeBal = address(this).balance;
 
         router.swapExactTokensForETHSupportingFeeOnTransferTokens(
-            amount,
-            minOut,
+            tokenAmount,
+            0,
             path,
             address(this),
             block.timestamp
         );
 
-        return address(this).balance - beforeBal;
+        uint256 received = address(this).balance - beforeBal;
+
+        totalSwapped += tokenAmount;
+
+        emit SwapExecuted(tokenAmount, received);
+
+        _accrueToVault(received);
     }
 
-    function _addLiquidity(uint256 tokenAmount, uint256 ethAmount) internal {
-        if (tokenAmount == 0 || ethAmount == 0) return;
+    /* ───────────────── TREASURY ROUTING (NO EXTERNAL CALLS) ───────────────── */
 
-        _approve(address(this), address(router), tokenAmount);
+    function _accrueToVault(uint256 amount) internal {
+        if (amount == 0) return;
 
-        router.addLiquidityETH{value: ethAmount}(
-            address(this),
-            tokenAmount,
-            0,
-            0,
-            owner(),
-            block.timestamp
-        );
+        address vault = treasuryVault;
+
+        require(approvedVaults[vault], "Vault not approved");
+
+        vaultBalances[vault] += amount;
+
+        emit VaultAccrued(vault, amount);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        ADMIN
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── VAULT CLAIM (PULL MODEL) ───────────────── */
 
-    function setFees(uint256 _buy, uint256 _sell) external onlyOwner {
-        require(_buy <= MAX_FEE && _sell <= MAX_FEE, "FEE");
-        buyFee = _buy;
-        sellFee = _sell;
+    function claimVaultFunds() external nonReentrant {
+        uint256 amount = vaultBalances[msg.sender];
+
+        require(amount > 0, "Nothing");
+
+        vaultBalances[msg.sender] = 0;
+
+        (bool ok, ) = payable(msg.sender).call{value: amount}("");
+        require(ok, "Transfer failed");
+
+        totalETHSent += amount;
+
+        emit VaultClaimed(msg.sender, amount);
     }
 
-    function setTreasury(address _treasury) external onlyOwner {
-        require(_treasury != address(0), "ZERO");
-        treasury = _treasury;
-    }
-
-    function setSwapConfig(
-        uint256 _threshold,
-        uint256 _cooldown,
-        uint256 _minSwap,
-        uint256 _slippage
-    ) external onlyOwner {
-        require(_slippage <= 1000, "SLIPPAGE");
-
-        swapThreshold = _threshold;
-        swapCooldown = _cooldown;
-        minSwapAmount = _minSwap;
-        maxSlippageBps = _slippage;
-    }
-
-    function setPair(address pair, bool status) external onlyOwner {
-        isPair[pair] = status;
-    }
-
-    function setFeeExempt(address user, bool status) external onlyOwner {
-        isFeeExempt[user] = status;
-    }
-
-    function setPaused(bool _paused) external onlyOwner {
-        paused = _paused;
-    }
-
-    function setSwapEnabled(bool _enabled) external onlyOwner {
-        swapEnabled = _enabled;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        EMERGENCY
-    //////////////////////////////////////////////////////////////*/
-
-    function rescueETH() external onlyOwner {
-        (bool ok, ) = owner().call{value: address(this).balance}("");
-        require(ok, "FAIL");
-    }
-
-    function rescueTokens(address token) external onlyOwner {
-        IERC20(token).transfer(owner(), IERC20(token).balanceOf(address(this)));
-    }
+    /* ───────────────── RECEIVE ───────────────── */
 
     receive() external payable {}
 }
+
+// address[] memory path = new address[](2);

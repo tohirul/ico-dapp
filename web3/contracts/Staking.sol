@@ -1,111 +1,232 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-/*//////////////////////////////////////////////////////////////
-                            IMPORTS
-//////////////////////////////////////////////////////////////*/
+/* ───────────────── IMPORTS ───────────────── */
 
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
-/*//////////////////////////////////////////////////////////////
-                        NFT BOOST INTERFACE
-//////////////////////////////////////////////////////////////*/
+/* ───────────────── INTERFACES ───────────────── */
 
 interface INFTBoost {
-    function getBoost(address user) external view returns (uint256); 
-    // returns boost in BPS (e.g. 12000 = 1.2x)
+    function getBoost(address user) external view returns (uint256);
 }
 
-/*//////////////////////////////////////////////////////////////
-                        CONTRACT
-//////////////////////////////////////////////////////////////*/
+/* ───────────────── CONTRACT ───────────────── */
 
-contract Staking is Ownable, ReentrancyGuard {
+contract Staking is AccessControl, ReentrancyGuard, Pausable {
+    using SafeERC20 for IERC20;
 
-    /*//////////////////////////////////////////////////////////////
-                            CONSTANTS
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── ROLES ───────────────── */
 
-    uint256 public constant PRECISION = 1e12;
-    uint256 public constant MAX_BOOST = 20000; // 2x cap
-    uint256 public constant BASE_BOOST = 10000;
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    bytes32 public constant ALLOCATOR_ROLE = keccak256("ALLOCATOR_ROLE");
 
-    /*//////////////////////////////////////////////////////////////
-                            TOKENS
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── TOKENS ───────────────── */
 
     IERC20 public immutable stakingToken;
     IERC20 public immutable rewardToken;
 
-    address public treasury;
-    INFTBoost public nftBoost;
+    /* ───────────────── GLOBAL STATE ───────────────── */
 
-    /*//////////////////////////////////////////////////////////////
-                        REWARD STATE
-    //////////////////////////////////////////////////////////////*/
-
-    uint256 public rewardRate; // tokens per second
+    uint256 public rewardRate;              // tokens per second
     uint256 public lastUpdateTime;
     uint256 public accRewardPerShare;
 
     uint256 public totalStaked;
 
-    /*//////////////////////////////////////////////////////////////
-                        BUDGET CONTROL
-    //////////////////////////////////////////////////////////////*/
+    uint256 public totalFunded;
+    uint256 public totalDistributed;
 
-    uint256 public rewardBudget;     // total allocated
-    uint256 public rewardDistributed; // total paid out
+    uint256 public constant PRECISION = 1e12;
 
-    /*//////////////////////////////////////////////////////////////
-                        USER STATE
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── BOOST ───────────────── */
 
-    struct User {
+    INFTBoost public boostContract;
+
+    uint256 public constant MAX_BOOST_BPS = 20000;        // NFT cap (2x)
+    uint256 public constant MAX_TOTAL_BOOST_BPS = 30000;  // final cap (3x)
+
+    /* ───────────────── LOCK TIERS ───────────────── */
+
+    struct Lock {
+        uint256 duration;
+        uint256 multiplierBps;
+    }
+
+    Lock[] public lockTiers;
+
+    /* ───────────────── USER STATE ───────────────── */
+
+    struct UserInfo {
         uint256 amount;
         uint256 rewardDebt;
-        uint256 pending;
+        uint256 unlockTime;
+        uint256 multiplier;
     }
 
-    mapping(address => User) public users;
+    mapping(address => UserInfo) public users;
 
-    /*//////////////////////////////////////////////////////////////
-                            EVENTS
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── INIT CONTROL ───────────────── */
 
-    event Staked(address indexed user, uint256 amount);
-    event Withdrawn(address indexed user, uint256 amount);
-    event Claimed(address indexed user, uint256 amount);
-    event RewardFunded(uint256 amount);
-    event RewardRateUpdated(uint256 rate);
-    event NFTBoostSet(address nft);
+    bool public initialized;
 
-    /*//////////////////////////////////////////////////////////////
-                        CONSTRUCTOR
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── EVENTS ───────────────── */
 
-    constructor(
-        address _stakingToken,
-        address _rewardToken,
-        address _treasury,
-        address _owner
-    ) Ownable(_owner) {
-        require(_stakingToken != address(0), "INVALID_STAKE");
-        require(_rewardToken != address(0), "INVALID_REWARD");
-        require(_treasury != address(0), "INVALID_TREASURY");
+    event Initialized(uint256 rewardRate, address boost);
+    event Funded(uint256 amount);
+    event RewardRateUpdated(uint256 newRate);
+    event BoostUpdated(address boost);
 
-        stakingToken = IERC20(_stakingToken);
-        rewardToken = IERC20(_rewardToken);
-        treasury = _treasury;
+    event Staked(address user, uint256 amount, uint256 lockDuration);
+    event Unstaked(address user, uint256 amount);
+    event Claimed(address user, uint256 amount);
+
+    /* ───────────────── CONSTRUCTOR ───────────────── */
+
+    constructor(address _staking, address _reward, address admin) {
+        require(_staking != address(0) && _reward != address(0), "Zero address");
+
+        stakingToken = IERC20(_staking);
+        rewardToken = IERC20(_reward);
+
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(OPERATOR_ROLE, admin);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        CORE UPDATE LOGIC
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── INITIALIZATION ───────────────── */
+
+    function initialize(uint256 _rewardRate, address _boost)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        require(!initialized, "Already initialized");
+
+        rewardRate = _rewardRate;
+        boostContract = INFTBoost(_boost);
+        lastUpdateTime = block.timestamp;
+
+        initialized = true;
+
+        emit Initialized(_rewardRate, _boost);
+    }
+
+    /* ───────────────── GOVERNANCE ───────────────── */
+
+    function setRewardRate(uint256 _rate)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        _updatePool();
+        rewardRate = _rate;
+        emit RewardRateUpdated(_rate);
+    }
+
+    function setBoostContract(address _boost)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        boostContract = INFTBoost(_boost);
+        emit BoostUpdated(_boost);
+    }
+
+    function addLockTier(uint256 duration, uint256 multiplierBps)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        require(multiplierBps >= 10000, "Invalid multiplier");
+        lockTiers.push(Lock(duration, multiplierBps));
+    }
+
+    function fundRewards(uint256 amount)
+        external
+        onlyRole(ALLOCATOR_ROLE)
+    {
+        require(amount > 0, "Zero amount");
+
+        rewardToken.safeTransferFrom(msg.sender, address(this), amount);
+        totalFunded += amount;
+
+        emit Funded(amount);
+    }
+
+    /* ───────────────── USER ACTIONS ───────────────── */
+
+    function stake(uint256 amount, uint256 tierIndex)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        require(initialized, "Not initialized");
+        require(amount > 0, "Zero amount");
+        require(tierIndex < lockTiers.length, "Invalid tier");
+
+        _updatePool();
+
+        UserInfo storage user = users[msg.sender];
+
+        // enforce lock integrity
+        if (user.amount > 0) {
+            require(block.timestamp >= user.unlockTime, "Active lock");
+        }
+
+        _harvest(msg.sender);
+
+        Lock memory tier = lockTiers[tierIndex];
+
+        stakingToken.safeTransferFrom(msg.sender, address(this), amount);
+
+        user.amount += amount;
+        user.unlockTime = block.timestamp + tier.duration;
+        user.multiplier = tier.multiplierBps;
+
+        totalStaked += amount;
+
+        user.rewardDebt = _pendingBase(user);
+
+        emit Staked(msg.sender, amount, tier.duration);
+    }
+
+    function unstake(uint256 amount)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        UserInfo storage user = users[msg.sender];
+
+        require(amount > 0, "Zero amount");
+        require(user.amount >= amount, "Insufficient");
+        require(block.timestamp >= user.unlockTime, "Locked");
+
+        _updatePool();
+        _harvest(msg.sender);
+
+        user.amount -= amount;
+        totalStaked -= amount;
+
+        stakingToken.safeTransfer(msg.sender, amount);
+
+        user.rewardDebt = _pendingBase(user);
+
+        emit Unstaked(msg.sender, amount);
+    }
+
+    function claim()
+        external
+        nonReentrant
+    {
+        _updatePool();
+        _harvest(msg.sender);
+    }
+
+    /* ───────────────── INTERNAL LOGIC ───────────────── */
 
     function _updatePool() internal {
+        if (!initialized) return;
+
         if (block.timestamp <= lastUpdateTime) return;
 
         if (totalStaked == 0) {
@@ -113,164 +234,68 @@ contract Staking is Ownable, ReentrancyGuard {
             return;
         }
 
-        uint256 timeElapsed = block.timestamp - lastUpdateTime;
-        uint256 reward = timeElapsed * rewardRate;
-
-        // 🔒 HARD CAP ENFORCEMENT
-        uint256 remaining = rewardBudget - rewardDistributed;
-        if (reward > remaining) {
-            reward = remaining;
-        }
-
-        if (reward == 0) {
+        if (totalFunded <= totalDistributed) {
             lastUpdateTime = block.timestamp;
             return;
         }
 
+        uint256 duration = block.timestamp - lastUpdateTime;
+        uint256 reward = duration * rewardRate;
+
+        uint256 available = totalFunded - totalDistributed;
+        if (reward > available) reward = available;
+
         accRewardPerShare += (reward * PRECISION) / totalStaked;
-        rewardDistributed += reward;
 
         lastUpdateTime = block.timestamp;
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        BOOST LOGIC
-    //////////////////////////////////////////////////////////////*/
+    function _harvest(address userAddr) internal {
+        uint256 pending = _pending(userAddr);
 
-    function _getBoost(address user) internal view returns (uint256) {
-        if (address(nftBoost) == address(0)) return BASE_BOOST;
+        if (pending > 0) {
+            totalDistributed += pending;
+            rewardToken.safeTransfer(userAddr, pending);
 
-        uint256 boost = nftBoost.getBoost(user);
-
-        if (boost < BASE_BOOST) return BASE_BOOST;
-        if (boost > MAX_BOOST) return MAX_BOOST;
-
-        return boost;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        VIEW PENDING
-    //////////////////////////////////////////////////////////////*/
-
-    function pendingRewards(address userAddr) external view returns (uint256) {
-        User memory u = users[userAddr];
-
-        uint256 _acc = accRewardPerShare;
-
-        if (block.timestamp > lastUpdateTime && totalStaked != 0) {
-            uint256 timeElapsed = block.timestamp - lastUpdateTime;
-            uint256 reward = timeElapsed * rewardRate;
-
-            uint256 remaining = rewardBudget - rewardDistributed;
-            if (reward > remaining) reward = remaining;
-
-            _acc += (reward * PRECISION) / totalStaked;
+            emit Claimed(userAddr, pending);
         }
 
-        uint256 base = (u.amount * _acc) / PRECISION - u.rewardDebt;
-        uint256 boost = _getBoost(userAddr);
-
-        return (base * boost) / BASE_BOOST + u.pending;
+        users[userAddr].rewardDebt = _pendingBase(users[userAddr]);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        STAKE
-    //////////////////////////////////////////////////////////////*/
+    function _pending(address userAddr)
+        internal
+        view
+        returns (uint256)
+    {
+        UserInfo memory user = users[userAddr];
 
-    function stake(uint256 amount) external nonReentrant {
-        require(amount > 0, "ZERO");
+        uint256 base = _pendingBase(user);
 
-        _updatePool();
+        uint256 boost = user.multiplier;
 
-        User storage u = users[msg.sender];
+        if (address(boostContract) != address(0)) {
+            uint256 nftBoost = boostContract.getBoost(userAddr);
 
-        if (u.amount > 0) {
-            uint256 pending = (u.amount * accRewardPerShare) / PRECISION - u.rewardDebt;
-            u.pending += pending;
+            if (nftBoost > MAX_BOOST_BPS) {
+                nftBoost = MAX_BOOST_BPS;
+            }
+
+            boost = (boost * nftBoost) / 10000;
         }
 
-        stakingToken.transferFrom(msg.sender, address(this), amount);
+        if (boost > MAX_TOTAL_BOOST_BPS) {
+            boost = MAX_TOTAL_BOOST_BPS;
+        }
 
-        u.amount += amount;
-        totalStaked += amount;
-
-        u.rewardDebt = (u.amount * accRewardPerShare) / PRECISION;
-
-        emit Staked(msg.sender, amount);
+        return (base * boost) / 10000;
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        WITHDRAW
-    //////////////////////////////////////////////////////////////*/
-
-    function withdraw(uint256 amount) external nonReentrant {
-        User storage u = users[msg.sender];
-        require(u.amount >= amount, "INSUFFICIENT");
-
-        _updatePool();
-
-        uint256 pending = (u.amount * accRewardPerShare) / PRECISION - u.rewardDebt;
-        u.pending += pending;
-
-        u.amount -= amount;
-        totalStaked -= amount;
-
-        stakingToken.transfer(msg.sender, amount);
-
-        u.rewardDebt = (u.amount * accRewardPerShare) / PRECISION;
-
-        emit Withdrawn(msg.sender, amount);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        CLAIM
-    //////////////////////////////////////////////////////////////*/
-
-    function claim() external nonReentrant {
-        _updatePool();
-
-        User storage u = users[msg.sender];
-
-        uint256 pending = (u.amount * accRewardPerShare) / PRECISION - u.rewardDebt;
-        uint256 total = u.pending + pending;
-
-        require(total > 0, "NO_REWARD");
-
-        u.pending = 0;
-        u.rewardDebt = (u.amount * accRewardPerShare) / PRECISION;
-
-        uint256 boost = _getBoost(msg.sender);
-        uint256 finalReward = (total * boost) / BASE_BOOST;
-
-        // 🔒 FINAL BUDGET CHECK (ABSOLUTE SAFETY)
-        require(rewardDistributed <= rewardBudget, "OVER_DISTRIBUTION");
-
-        rewardToken.transferFrom(treasury, msg.sender, finalReward);
-
-        emit Claimed(msg.sender, finalReward);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        FUNDING
-    //////////////////////////////////////////////////////////////*/
-
-    function fundRewards(uint256 amount) external onlyOwner {
-        require(amount > 0, "ZERO");
-
-        rewardToken.transferFrom(msg.sender, treasury, amount);
-        rewardBudget += amount;
-
-        emit RewardFunded(amount);
-    }
-
-    function setRewardRate(uint256 rate) external onlyOwner {
-        _updatePool();
-        rewardRate = rate;
-        emit RewardRateUpdated(rate);
-    }
-
-    function setNFTBoost(address _nft) external onlyOwner {
-        nftBoost = INFTBoost(_nft);
-        emit NFTBoostSet(_nft);
+    function _pendingBase(UserInfo memory user)
+        internal
+        view
+        returns (uint256)
+    {
+        return (user.amount * accRewardPerShare) / PRECISION - user.rewardDebt;
     }
 }

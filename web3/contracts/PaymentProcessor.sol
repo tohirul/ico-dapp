@@ -1,195 +1,275 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-/*//////////////////////////////////////////////////////////////
-                            IMPORTS
-//////////////////////////////////////////////////////////////*/
+/* ───────────────── IMPORTS ───────────────── */
+
+import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 
-/*//////////////////////////////////////////////////////////////
-                        CONTRACT
-//////////////////////////////////////////////////////////////*/
+/* ───────────────── CONTRACT ───────────────── */
 
-contract PaymentProcessor is Ownable, ReentrancyGuard {
+contract PaymentProcessor is
+    AccessControl,
+    ReentrancyGuard,
+    Pausable,
+    EIP712
+{
+    using SafeERC20 for IERC20;
 
-    /*//////////////////////////////////////////////////////////////
-                            CONSTANTS
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── ROLES ───────────────── */
 
-    uint256 public constant DENOM = 10_000;
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    bytes32 public constant SIGNER_ROLE = keccak256("SIGNER_ROLE");
 
-    /*//////////////////////////////////////////////////////////////
-                            STATE
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── CONSTANTS ───────────────── */
 
-    IERC20 public paymentToken;
+    uint256 public constant BPS_DENOM = 10_000;
 
-    address public treasury;
-    address public marketing;
-    address public operations;
+    /* ───────────────── EIP712 ───────────────── */
 
-    uint256 public treasuryShare = 7000;   // 70%
-    uint256 public marketingShare = 2000;  // 20%
-    uint256 public operationsShare = 1000; // 10%
+    string private constant NAME = "PaymentProcessor";
+    string private constant VERSION = "1";
 
-    /*//////////////////////////////////////////////////////////////
-                        ACCOUNTING
-    //////////////////////////////////////////////////////////////*/
+    bytes32 private constant PAYMENT_TYPEHASH =
+        keccak256(
+            "Payment(bytes32 paymentId,address payer,address token,uint256 amount,address recipient,uint256 deadline)"
+        );
 
+    /* ───────────────── STATE ───────────────── */
+
+    address public treasuryVault;
+
+    mapping(bytes32 => bool) public processedPayments;
+
+    mapping(address => bool) public allowedTokens;
+    mapping(address => bool) public approvedRecipients;
+
+    uint256 public totalReceived;
     uint256 public totalProcessed;
-    uint256 public totalToTreasury;
-    uint256 public totalToMarketing;
-    uint256 public totalToOperations;
 
-    /*//////////////////////////////////////////////////////////////
-                            EVENTS
-    //////////////////////////////////////////////////////////////*/
+    bool public signatureRequired = true;
+
+    /* ───────────────── EVENTS ───────────────── */
 
     event PaymentProcessed(
-        address indexed user,
+        bytes32 indexed paymentId,
+        address indexed payer,
+        address indexed token,
         uint256 amount,
-        uint256 treasuryAmount,
-        uint256 marketingAmount,
-        uint256 operationsAmount
+        address recipient
     );
 
-    event SharesUpdated(uint256 treasury, uint256 marketing, uint256 ops);
-    event WalletsUpdated(address treasury, address marketing, address ops);
-    event TokenUpdated(address token);
+    event TreasuryVaultUpdated(address vault);
+    event TokenAllowed(address token, bool allowed);
+    event RecipientApproved(address recipient, bool approved);
+    event SignatureRequirementUpdated(bool required);
 
-    /*//////////////////////////////////////////////////////////////
-                        CONSTRUCTOR
-    //////////////////////////////////////////////////////////////*/
+    /* ───────────────── CONSTRUCTOR ───────────────── */
 
-    constructor(
-        address _token,
-        address _treasury,
-        address _marketing,
-        address _operations,
-        address _owner
-    ) Ownable(_owner) {
-        require(_token != address(0), "INVALID_TOKEN");
-        require(_treasury != address(0), "INVALID_TREASURY");
-        require(_marketing != address(0), "INVALID_MARKETING");
-        require(_operations != address(0), "INVALID_OPERATIONS");
-
-        paymentToken = IERC20(_token);
-        treasury = _treasury;
-        marketing = _marketing;
-        operations = _operations;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        PAYMENT LOGIC
-    //////////////////////////////////////////////////////////////*/
-
-    function processPayment(uint256 amount) external nonReentrant {
-        require(amount > 0, "ZERO_AMOUNT");
-
-        uint256 balanceBefore = paymentToken.balanceOf(address(this));
-
-        paymentToken.transferFrom(msg.sender, address(this), amount);
-
-        uint256 received = paymentToken.balanceOf(address(this)) - balanceBefore;
-        require(received > 0, "TRANSFER_FAIL");
-
-        // 🔥 deterministic split
-        uint256 toTreasury = (received * treasuryShare) / DENOM;
-        uint256 toMarketing = (received * marketingShare) / DENOM;
-        uint256 toOperations = received - toTreasury - toMarketing;
-
-        // 🔒 transfers (fail-safe)
-        _safeTransfer(treasury, toTreasury);
-        _safeTransfer(marketing, toMarketing);
-        _safeTransfer(operations, toOperations);
-
-        // 📊 accounting
-        totalProcessed += received;
-        totalToTreasury += toTreasury;
-        totalToMarketing += toMarketing;
-        totalToOperations += toOperations;
-
-        emit PaymentProcessed(
-            msg.sender,
-            received,
-            toTreasury,
-            toMarketing,
-            toOperations
-        );
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        INTERNAL SAFE TRANSFER
-    //////////////////////////////////////////////////////////////*/
-
-    function _safeTransfer(address to, uint256 amount) internal {
-        if (amount == 0) return;
-
-        bool success = paymentToken.transfer(to, amount);
-        require(success, "TRANSFER_FAILED");
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        ADMIN CONFIG
-    //////////////////////////////////////////////////////////////*/
-
-    function setShares(
-        uint256 _treasury,
-        uint256 _marketing,
-        uint256 _operations
-    ) external onlyOwner {
-        require(
-            _treasury + _marketing + _operations == DENOM,
-            "INVALID_SPLIT"
-        );
-
-        treasuryShare = _treasury;
-        marketingShare = _marketing;
-        operationsShare = _operations;
-
-        emit SharesUpdated(_treasury, _marketing, _operations);
-    }
-
-    function setWallets(
-        address _treasury,
-        address _marketing,
-        address _operations
-    ) external onlyOwner {
-        require(_treasury != address(0), "ZERO");
-        require(_marketing != address(0), "ZERO");
-        require(_operations != address(0), "ZERO");
-
-        treasury = _treasury;
-        marketing = _marketing;
-        operations = _operations;
-
-        emit WalletsUpdated(_treasury, _marketing, _operations);
-    }
-
-    function setPaymentToken(address _token) external onlyOwner {
-        require(_token != address(0), "ZERO");
-        paymentToken = IERC20(_token);
-        emit TokenUpdated(_token);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        VIEW HELPERS
-    //////////////////////////////////////////////////////////////*/
-
-    function previewSplit(uint256 amount)
-        external
-        view
-        returns (
-            uint256 toTreasury,
-            uint256 toMarketing,
-            uint256 toOperations
-        )
+    constructor(address _vault, address admin)
+        EIP712(NAME, VERSION)
     {
-        toTreasury = (amount * treasuryShare) / DENOM;
-        toMarketing = (amount * marketingShare) / DENOM;
-        toOperations = amount - toTreasury - toMarketing;
+        require(_vault != address(0), "Invalid vault");
+
+        treasuryVault = _vault;
+
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(OPERATOR_ROLE, admin);
+        _grantRole(SIGNER_ROLE, admin);
     }
+
+    /* ───────────────── PAYMENT ENTRY ───────────────── */
+
+    function payETH(
+        bytes32 paymentId,
+        address recipient,
+        uint256 deadline,
+        bytes calldata signature
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+    {
+        require(msg.value > 0, "Zero payment");
+
+        _processPayment(
+            paymentId,
+            msg.sender,
+            address(0),
+            msg.value,
+            recipient,
+            deadline,
+            signature
+        );
+    }
+
+    function payERC20(
+        bytes32 paymentId,
+        address token,
+        uint256 amount,
+        address recipient,
+        uint256 deadline,
+        bytes calldata signature
+    )
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        require(amount > 0, "Zero amount");
+        require(allowedTokens[token], "Token not allowed");
+
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+
+        _processPayment(
+            paymentId,
+            msg.sender,
+            token,
+            amount,
+            recipient,
+            deadline,
+            signature
+        );
+    }
+
+    /* ───────────────── CORE LOGIC ───────────────── */
+
+    function _processPayment(
+        bytes32 paymentId,
+        address payer,
+        address token,
+        uint256 amount,
+        address recipient,
+        uint256 deadline,
+        bytes calldata signature
+    ) internal {
+        require(!processedPayments[paymentId], "Already processed");
+        require(recipient != address(0), "Invalid recipient");
+
+        if (approvedRecipients[recipient]) {
+            // optional strict mode
+        }
+
+        if (signatureRequired) {
+            _verifySignature(
+                paymentId,
+                payer,
+                token,
+                amount,
+                recipient,
+                deadline,
+                signature
+            );
+        }
+
+        processedPayments[paymentId] = true;
+
+        totalReceived += amount;
+
+        _forwardFunds(token, amount);
+
+        totalProcessed += amount;
+
+        require(totalProcessed <= totalReceived, "Invariant broken");
+
+        emit PaymentProcessed(paymentId, payer, token, amount, recipient);
+    }
+
+    /* ───────────────── SIGNATURE VERIFY (EIP712) ───────────────── */
+
+    function _verifySignature(
+        bytes32 paymentId,
+        address payer,
+        address token,
+        uint256 amount,
+        address recipient,
+        uint256 deadline,
+        bytes calldata signature
+    ) internal view {
+        require(block.timestamp <= deadline, "Expired");
+
+        bytes32 structHash = keccak256(
+            abi.encode(
+                PAYMENT_TYPEHASH,
+                paymentId,
+                payer,
+                token,
+                amount,
+                recipient,
+                deadline
+            )
+        );
+
+        bytes32 digest = _hashTypedDataV4(structHash);
+
+        address signer = ECDSA.recover(digest, signature);
+
+        require(hasRole(SIGNER_ROLE, signer), "Invalid signature");
+    }
+
+    /* ───────────────── FUND ROUTING ───────────────── */
+
+    function _forwardFunds(address token, uint256 amount) internal {
+        if (token == address(0)) {
+            (bool ok, ) = treasuryVault.call{value: amount}("");
+            require(ok, "ETH transfer failed");
+        } else {
+            IERC20(token).safeTransfer(treasuryVault, amount);
+        }
+    }
+
+    /* ───────────────── ADMIN ───────────────── */
+
+    function setTreasuryVault(address _vault)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        require(_vault != address(0), "Zero address");
+        treasuryVault = _vault;
+
+        emit TreasuryVaultUpdated(_vault);
+    }
+
+    function setAllowedToken(address token, bool allowed)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        allowedTokens[token] = allowed;
+        emit TokenAllowed(token, allowed);
+    }
+
+    function setApprovedRecipient(address recipient, bool approved)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        approvedRecipients[recipient] = approved;
+        emit RecipientApproved(recipient, approved);
+    }
+
+    function setSignatureRequired(bool required)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        signatureRequired = required;
+        emit SignatureRequirementUpdated(required);
+    }
+
+    function pause() external onlyRole(OPERATOR_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(OPERATOR_ROLE) {
+        _unpause();
+    }
+
+    /* ───────────────── RECEIVE ───────────────── */
+
+    receive() external payable {}
 }

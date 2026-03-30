@@ -6,8 +6,10 @@
     "strict": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "types": ["node", "hardhat"],
     "skipLibCheck": true,
-    "types": ["node", "hardhat"]
+    "types": [
+      "node",
+      "hardhat"
+    ]
   }
 }
