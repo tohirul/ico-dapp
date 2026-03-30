@@ -9,12 +9,6 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/* ───────────────── INTERFACES ───────────────── */
-
-interface ITreasuryCallable {
-    function treasuryCall(bytes calldata data) external returns (bytes memory);
-}
-
 /* ───────────────── CONTRACT ───────────────── */
 
 contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
@@ -26,10 +20,21 @@ contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant EXECUTOR_ROLE  = keccak256("EXECUTOR_ROLE");
     bytes32 public constant ALLOCATOR_ROLE = keccak256("ALLOCATOR_ROLE");
 
+    /* ───────────────── LIMITS ───────────────── */
+
+    uint256 public maxTxValue;
+    uint256 public dailyLimit;
+
+    uint256 public spentToday;
+    uint256 public lastReset;
+
     /* ───────────────── ALLOWLISTS ───────────────── */
 
     mapping(address => bool) public approvedTargets;
     mapping(address => bool) public approvedRecipients;
+
+    // function selector allowlist per target
+    mapping(address => mapping(bytes4 => bool)) public approvedSelectors;
 
     /* ───────────────── ACCOUNTING ───────────────── */
 
@@ -39,14 +44,6 @@ contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
     uint256 public totalAllocatedERC20;
 
     uint256 public executionNonce;
-
-    /* ───────────────── LIMITS ───────────────── */
-
-    uint256 public maxTxValue;
-    uint256 public dailyLimit;
-
-    uint256 public spentToday;
-    uint256 public lastReset;
 
     /* ───────────────── WITHDRAW MODEL ───────────────── */
 
@@ -58,18 +55,18 @@ contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
 
     /* ───────────────── EVENTS ───────────────── */
 
-    event Executed(uint256 indexed nonce, address indexed target);
+    event Executed(uint256 indexed nonce, address indexed target, bytes4 selector);
     event PendingWithdrawal(address indexed to, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
 
     event ETHAllocated(address indexed to, uint256 amount);
     event ERC20Allocated(address indexed token, address indexed to, uint256 amount);
 
-    event ETHTransferred(address indexed to, uint256 amount);
     event ERC20Transferred(address indexed token, address indexed to, uint256 amount);
 
     event TargetApproved(address target, bool status);
     event RecipientApproved(address recipient, bool status);
+    event SelectorApproved(address target, bytes4 selector, bool status);
 
     event LimitsUpdated(uint256 maxTx, uint256 daily);
     event AllocatorModeUpdated(bool enabled);
@@ -79,6 +76,8 @@ contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
     /* ───────────────── CONSTRUCTOR ───────────────── */
 
     constructor(address admin) {
+        require(admin != address(0), "Invalid admin");
+
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(OPERATOR_ROLE, admin);
         _grantRole(EXECUTOR_ROLE, admin);
@@ -93,27 +92,7 @@ contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
     }
 
     function depositETH() external payable {
-    emit Deposit(msg.sender, msg.value);
-}
-
-    /* ───────────────── ALLOWLIST MANAGEMENT ───────────────── */
-
-    function setApprovedTarget(address target, bool status)
-        external
-        onlyRole(OPERATOR_ROLE)
-    {
-        require(target != address(0), "Zero address");
-        approvedTargets[target] = status;
-        emit TargetApproved(target, status);
-    }
-
-    function setApprovedRecipient(address user, bool approved)
-        external
-        onlyRole(OPERATOR_ROLE)
-    {
-        require(user != address(0), "Zero address");
-        approvedRecipients[user] = approved;
-        emit RecipientApproved(user, approved);
+        emit Deposit(msg.sender, msg.value);
     }
 
     /* ───────────────── LIMIT CONTROL ───────────────── */
@@ -122,12 +101,16 @@ contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
         external
         onlyRole(OPERATOR_ROLE)
     {
+        require(_maxTx <= _daily, "Invalid limits");
+
         maxTxValue = _maxTx;
         dailyLimit = _daily;
+
         emit LimitsUpdated(_maxTx, _daily);
     }
 
     function _enforceLimits(uint256 amount) internal {
+        require(amount > 0, "Zero amount");
         require(amount <= maxTxValue, "Tx limit");
 
         if (block.timestamp > lastReset + 1 days) {
@@ -140,12 +123,42 @@ contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
         spentToday += amount;
     }
 
-    /* ───────────────── EXECUTION ENGINE (SAFE) ───────────────── */
+    /* ───────────────── ALLOWLIST MANAGEMENT ───────────────── */
 
-    function execute(
-        address target,
-        bytes calldata data
-    )
+    function setApprovedTarget(address target, bool status)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        require(target != address(0), "Zero address");
+        approvedTargets[target] = status;
+        emit TargetApproved(target, status);
+    }
+
+    function setApprovedSelector(address target, bytes4 selector, bool status)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        require(approvedTargets[target], "Target not approved");
+
+        approvedSelectors[target][selector] = status;
+
+        emit SelectorApproved(target, selector, status);
+    }
+
+    function setApprovedRecipient(address user, bool approved)
+        external
+        onlyRole(OPERATOR_ROLE)
+    {
+        require(user != address(0), "Zero address");
+
+        approvedRecipients[user] = approved;
+
+        emit RecipientApproved(user, approved);
+    }
+
+    /* ───────────────── EXECUTION ENGINE (STRICT) ───────────────── */
+
+    function execute(address target, bytes calldata data)
         external
         nonReentrant
         whenNotPaused
@@ -154,16 +167,22 @@ contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
     {
         require(!allocatorOnlyMode, "Allocator only");
         require(approvedTargets[target], "Target not approved");
+        require(data.length >= 4, "Invalid calldata");
+
+        bytes4 selector;
+        assembly {
+            selector := calldataload(data.offset)
+        }
+
+        require(approvedSelectors[target][selector], "Selector not approved");
 
         uint256 nonce = executionNonce++;
 
-        // 🔒 NO ETH allowed in execution
-        (bool success, bytes memory result) =
-            target.call(data);
+        (bool success, bytes memory result) = target.call(data);
 
         require(success, "Execution failed");
 
-        emit Executed(nonce, target);
+        emit Executed(nonce, target, selector);
 
         return result;
     }
@@ -205,6 +224,7 @@ contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
 
     function withdrawPending() external nonReentrant {
         uint256 amount = pendingWithdrawals[msg.sender];
+
         require(amount > 0, "Nothing to withdraw");
 
         pendingWithdrawals[msg.sender] = 0;
@@ -215,7 +235,7 @@ contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
         emit Withdrawn(msg.sender, amount);
     }
 
-    /* ───────────────── ERC20 FLOW ───────────────── */
+    /* ───────────────── ERC20 FLOW (FIXED) ───────────────── */
 
     function transferERC20(address token, address to, uint256 amount)
         external
@@ -224,6 +244,8 @@ contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
     {
         require(!allocatorOnlyMode, "Allocator only");
         require(approvedRecipients[to], "Recipient not approved");
+
+        _enforceLimits(amount); // ✅ FIXED
 
         IERC20(token).safeTransfer(to, amount);
 
@@ -238,6 +260,8 @@ contract TreasuryVault is AccessControl, ReentrancyGuard, Pausable {
         whenNotPaused
     {
         require(approvedRecipients[to], "Recipient not approved");
+
+        _enforceLimits(amount); // ✅ FIXED
 
         IERC20(token).safeTransfer(to, amount);
 
