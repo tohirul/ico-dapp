@@ -12,6 +12,10 @@ import "@fontsource/syne/800.css";
 
 import "@/app/globals.css";
 import { getPublicEnv } from "@/lib/env";
+import { JetBrains_Mono } from "next/font/google";
+import { cn } from "@/lib/utils";
+
+const jetbrainsMono = JetBrains_Mono({subsets:['latin'],variable:'--font-mono'});
 
 const env = getPublicEnv();
 
@@ -45,7 +49,7 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={cn("font-mono", jetbrainsMono.variable)}>
       <body>{children}</body>
     </html>
   );

@@ -5,10 +5,22 @@ import {
   shortenAddress,
 } from "@/lib/format";
 import { type PublicEnv, getPublicEnv } from "@/lib/env";
-
 export interface NavItem {
   label: string;
   href: string;
+  external?: boolean;
+}
+
+export interface NavCTA {
+  label: string;
+  href: string;
+  external?: boolean;
+  variant: "primary" | "outline" | "ghost";
+}
+
+export interface NavigationConfig {
+  items: NavItem[];
+  ctas: NavCTA[];
 }
 
 export interface Metric {
@@ -66,7 +78,7 @@ export interface LogoItem {
 
 export interface SiteConfig {
   env: PublicEnv;
-  navItems: NavItem[];
+  navigation: NavigationConfig;
   metrics: Metric[];
   hero: HeroConfig;
   features: FeatureCard[];
@@ -137,19 +149,63 @@ function createReadiness(env: PublicEnv): ReadinessItem[] {
   ];
 }
 
-export function createSiteConfig(source: Record<string, string | undefined> = process.env): SiteConfig {
+export function createSiteConfig(
+  source: Record<string, string | undefined> = process.env,
+): SiteConfig {
   const env = getPublicEnv(source);
   const metrics = createMetrics(env);
   const readiness = createReadiness(env);
 
   return {
     env,
-    navItems: [
-      { label: "Overview", href: "#overview" },
-      { label: "Tokenomics", href: "#tokenomics" },
-      { label: "Roadmap", href: "#roadmap" },
-      { label: "FAQ", href: "#faq" },
-    ],
+    navigation: {
+      items: [
+        {
+          label: "Home",
+          href: "/",
+        },
+        {
+          label: "Earn",
+          href: "/earn",
+        },
+        {
+          label: "Tokenomics",
+          href: "#tokenomics",
+        },
+        {
+          label: "Roadmap",
+          href: "#roadmap",
+        },
+        {
+          label: "NFT",
+          href: "/nft",
+        },
+        {
+          label: "Blog",
+          href: "/blog",
+        },
+      ],
+
+      ctas: [
+        {
+          label: "Whitepaper",
+          href: "/lightchain-whitepaper.pdf",
+          external: true,
+          variant: "ghost",
+        },
+        {
+          label: "Buy OGT",
+          href: env.explorerUrl, // placeholder → replace with DEX later
+          external: true,
+          variant: "outline",
+        },
+        {
+          label: "Start Earning",
+          href: "/earn",
+          variant: "primary",
+        },
+      ],
+    },
     metrics,
     hero: {
       kicker: `${env.blockchain} presale built for operators buying with ${env.currency}, USDT, and USDC.`,
@@ -226,7 +282,8 @@ export function createSiteConfig(source: Record<string, string | undefined> = pr
     ],
     faqs: [
       {
-        question: "Why rebuild instead of incrementally upgrading the old files?",
+        question:
+          "Why rebuild instead of incrementally upgrading the old files?",
         answer:
           "Because the previous frontend was mostly placeholders and empty providers. Rebuilding the app shell produces a cleaner and safer result than carrying broken abstractions into TypeScript.",
       },
