@@ -1,34 +1,16 @@
 import "@nomicfoundation/hardhat-toolbox";
 import "dotenv/config";
 
-import type { HardhatUserConfig } from "hardhat/config";
+import { HardhatUserConfig } from "hardhat/config";
 
 const config: HardhatUserConfig = {
   solidity: {
-    version: "0.8.19",
+    version: "0.8.26",
     settings: {
-      optimizer: {
-        enabled: true,
-        runs: 200,
-      },
+      evmVersion: "cancun",
+      optimizer: { enabled: true, runs: 300 },
       viaIR: true,
     },
-  },
-  networks: {
-    hardhat: {
-      chainId: 1337,
-    },
-    polygon: {
-      url: process.env.NETWORK_RPC_URL ?? "",
-      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
-      chainId: 137,
-    },
-  },
-  paths: {
-    artifacts: "./artifacts",
-    sources: "./contracts",
-    cache: "./cache",
-    tests: "./test",
   },
 };
 
