@@ -2,6 +2,14 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { Button } from "../library/button";
+import {
+  DollarSign,
+  TrendingUp,
+  Layers,
+  ShieldCheck,
+  LucideIcon,
+} from "lucide-react";
 
 type DataPoint = {
   label: string;
@@ -20,7 +28,7 @@ const DATA: DataPoint[] = [
 
 export function HeroSection() {
   return (
-    <section className="hero-shell flex flex-col justify-between py-12">
+    <section className="hero-shell flex flex-col justify-between" id="home">
       {/* TOP GRID */}
       <div className="grid gap-12 lg:grid-cols-[1.05fr_0.95fr] items-center">
         {/* LEFT */}
@@ -41,28 +49,18 @@ export function HeroSection() {
           </div>
 
           <div className="flex gap-3">
-            <Link
-              href="/stake"
-              className="px-6 py-3 rounded-full bg-gradient-to-r from-cyan-300 to-teal-400 text-slate-900 font-semibold text-sm hover:brightness-110 transition"
-            >
-              Start Staking
-            </Link>
+            <Button variant="neon" radius="full" size="md">
+              <Link href="/stake">Start Staking</Link>
+            </Button>
 
-            <Link
-              href="/buy"
-              className="px-6 py-3 rounded-full border border-white/10 text-white text-sm hover:border-cyan-300 hover:text-cyan-300 transition"
-            >
-              Buy OGT
-            </Link>
+            <Button variant="outline" radius="full" size="md">
+              <Link href="/buy">Buy OGT</Link>
+            </Button>
           </div>
         </div>
 
         {/* RIGHT */}
-        <div className="relative rounded-[32px] p-7 overflow-hidden border border-white/10 bg-gradient-to-br from-[#071226] via-[#05101f] to-[#020617] shadow-[0_0_80px_rgba(0,200,255,0.12)]">
-          {/* ambient glow */}
-          <div className="absolute -top-20 -right-20 w-[300px] h-[300px] bg-cyan-400/10 blur-[120px]" />
-          <div className="absolute bottom-0 left-0 w-[200px] h-[200px] bg-teal-400/10 blur-[100px]" />
-
+        <div className="relative rounded-[32px] p-7 overflow-hidden border border-white/10 bg-linear-to-br from-[#071226] via-[#05101f] to-[#020617] shadow-[0_0_20px_rgba(0,200,255,0.12)]">
           {/* TOP: charts */}
           <div className="grid grid-cols-2 gap-6 items-center relative z-10">
             <RewardsChart data={DATA} />
@@ -75,13 +73,29 @@ export function HeroSection() {
           {/* KPI SECTION */}
           <div className="space-y-4 relative z-10">
             {/* APY HERO */}
-            <div className="rounded-2xl p-5 bg-gradient-to-r from-cyan-400/15 to-teal-400/10 border border-cyan-300/30 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
-              <p className="text-xs uppercase tracking-[0.25em] text-white/50">
-                Current APY
-              </p>
-              <p className="text-4xl font-display text-white mt-2">18%</p>
-            </div>
+            <div className="group relative rounded-2xl">
+              {/* MAIN SURFACE */}
+              <div className="relative rounded-2xl p-5 bg-[linear-gradient(135deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] backdrop-blur-2xl border border-white/10 overflow-hidden transition duration-500 group-hover:scale-[1.02] ">
+                {/* LIGHT SWEEP */}
+                <div className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition duration-700 bg-[linear-gradient(120deg,transparent_20%,rgba(255,255,255,0.18)_40%,transparent_60%)] translate-x-[-100%] group-hover:translate-x-[100%]" />
+                {/* COLOR BLEED */}
+                <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-cyan-400/20 blur-3xl rounded-full opacity-60 group-hover:opacity-100 transition  duration-500 " />
 
+                {/* INNER EDGE */}
+                <div className="absolute inset-0 rounded-2xl ring-1 ring-inset ring-white/5 group-hover:ring-cyan-300/40 transition duration-300 " />
+
+                {/* CONTENT */}
+                <div className="relative z-10">
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-white/40">
+                    Current APY
+                  </p>
+
+                  <p className="text-4xl font-display mt-3 bg-linear-to-br from-white to-white/70 bg-clip-text text-transparent group-hover:from-cyan-300  group-hover:to-cyan-100 transition duration-300 ">
+                    18%
+                  </p>
+                </div>
+              </div>
+            </div>
             {/* LOWER KPIs */}
             <div className="grid grid-cols-2 gap-4">
               <KpiBlock label="Total Value Locked" value="$2.4M" />
@@ -96,13 +110,19 @@ export function HeroSection() {
           label="Total Rewards Paid"
           value="$12.8M"
           variant="accent"
+          icon={DollarSign}
         />
 
-        <MetricCard label="Avg Daily Yield" value="0.85%" />
+        <MetricCard label="Avg Daily Yield" value="0.85%" icon={TrendingUp} />
 
-        <MetricCard label="Staking Pools" value="6 Active" />
+        <MetricCard label="Staking Pools" value="6 Active" icon={Layers} />
 
-        <MetricCard label="Audit Status" value="Verified" variant="success" />
+        <MetricCard
+          label="Audit Status"
+          value="Verified"
+          variant="success"
+          icon={ShieldCheck}
+        />
       </div>
     </section>
   );
@@ -184,27 +204,67 @@ function StakeDonut({ staked, liquid }: { staked: number; liquid: number }) {
     </div>
   );
 }
-
 function KpiBlock({ label, value }: { label: string; value: string }) {
   return (
-    <div
-      className="
-      rounded-xl p-4 border border-white/10 
-      bg-white/[0.03]
-      transition-all duration-300
-      hover:bg-white/[0.06]
-      hover:border-cyan-300/40
-      hover:shadow-[0_0_25px_rgba(34,211,238,0.15)]
-    "
-    >
-      <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
-        {label}
-      </p>
-      <p className="text-xl font-semibold text-white mt-2">{value}</p>
+    <div className="group relative w-full">
+      {/* AURORA LIGHT SOURCE (bring this back, but controlled) */}
+      <div className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition duration-500 scale-90 group-hover:scale-110 blur-xl  mix-blend-screen bg-[conic-gradient(at_30%_20%, #67e8f9, transparent_20%, #22d3ee, transparent_40%, #38bdf8, transparent_60%, #22d3ee )]" />
+
+      {/* MAIN SURFACE */}
+      <div
+        className="
+        relative rounded-2xl p-5
+        bg-[linear-gradient(135deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))]
+        backdrop-blur-2xl
+        border border-white/10
+        overflow-hidden
+        transition-all duration-500
+        group-hover:scale-[1.02]
+      "
+      >
+        {/* LIGHT SWEEP */}
+        <div
+          className="
+          pointer-events-none absolute inset-0
+          opacity-0 group-hover:opacity-100
+          transition duration-700
+          bg-[linear-gradient(120deg,transparent_20%,rgba(255,255,255,0.18)_40%,transparent_60%)]
+          translate-x-[-100%] group-hover:translate-x-[100%]
+        "
+        />
+
+        {/* INNER EDGE GLOW */}
+        <div
+          className="
+          absolute inset-0 rounded-2xl
+          ring-1 ring-inset ring-white/5
+          group-hover:ring-cyan-300/40
+          transition duration-300
+        "
+        />
+
+        {/* CONTENT */}
+        <div className="relative z-10">
+          <p className="text-[10px] uppercase tracking-[0.3em] text-white/40">
+            {label}
+          </p>
+
+          <p
+            className="
+            text-2xl font-semibold mt-3
+            bg-gradient-to-br from-white to-white/70
+            bg-clip-text text-transparent
+            group-hover:from-cyan-300 group-hover:to-cyan-100
+            transition duration-300
+          "
+          >
+            {value}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
-
 function RewardsChart({ data }: { data: DataPoint[] }) {
   const [active, setActive] = useState<number | null>(null);
   const max = Math.max(...data.map((d) => d.value));
@@ -269,41 +329,95 @@ function RewardsChart({ data }: { data: DataPoint[] }) {
 function MetricCard({
   label,
   value,
+  icon: Icon,
   variant = "default",
 }: {
   label: string;
   value: string;
+  icon?: LucideIcon;
   variant?: "default" | "accent" | "success";
 }) {
-  const variants = {
-    default: "bg-white/[0.03] border-white/10 hover:border-white/20",
-    accent: "bg-cyan-400/10 border-cyan-300/30 hover:border-cyan-300/50",
-    success:
-      "bg-emerald-400/10 border-emerald-300/30 hover:border-emerald-300/50",
+  const styles = {
+    default: {
+      glow: "rgba(255,255,255,0.15)",
+      orb: "bg-white/10",
+      icon: "text-white/70",
+      text: "group-hover:from-white group-hover:to-white/70",
+    },
+    accent: {
+      glow: "rgba(34,211,238,0.35)",
+      orb: "bg-cyan-400/20",
+      icon: "text-cyan-300",
+      text: "group-hover:from-cyan-300 group-hover:to-cyan-100",
+    },
+    success: {
+      glow: "rgba(16,185,129,0.35)",
+      orb: "bg-emerald-400/20",
+      icon: "text-emerald-300",
+      text: "group-hover:from-emerald-300 group-hover:to-emerald-100",
+    },
   };
 
+  const v = styles[variant];
+
   return (
-    <div
-      className={`
-        relative rounded-xl p-5 border transition-all duration-300
-        ${variants[variant]}
-        
-        hover:-translate-y-1
-        hover:shadow-[0_10px_30px_rgba(0,200,255,0.12)]
-        cursor-pointer
+    <div className="group relative w-full cursor-pointer  rounded-2xl">
+      {/* MAIN SURFACE */}
+      <div
+        className="
+        relative rounded-xl p-5
+        bg-[linear-gradient(135deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))]
+        backdrop-blur-xl
         overflow-hidden
-      `}
-    >
-      {/* subtle glow overlay */}
-      <div className="absolute inset-0 opacity-0 hover:opacity-100 transition bg-gradient-to-br from-cyan-400/5 to-transparent" />
+        transition-all duration-500
+        group-hover:-translate-y-1 group-hover:scale-[1.01]
+      "
+      >
+        {/* ICON */}
+        {Icon && (
+          <div
+            className={`
+            absolute top-4 right-4
+            p-2 rounded-lg
+            bg-white/5 backdrop-blur-md
+            ${v.icon}
+            transition duration-300
+            group-hover:scale-110
+          `}
+          >
+            <Icon size={18} strokeWidth={2} />
+          </div>
+        )}
 
-      <p className="text-[10px] uppercase tracking-[0.25em] text-white/40">
-        {label}
-      </p>
+        {/* INNER EDGE */}
+        <div
+          className="
+          absolute inset-0 rounded-xl
+          ring-1 ring-inset ring-white/5
+          group-hover:ring-white/20
+          transition duration-300
+        "
+        />
 
-      <p className="text-xl font-semibold text-white mt-3 tracking-tight">
-        {value}
-      </p>
+        {/* CONTENT */}
+        <div className="relative z-10">
+          <p className="text-[10px] uppercase tracking-[0.3em] text-white/40">
+            {label}
+          </p>
+
+          <p
+            className={`
+            text-xl font-semibold mt-3 tracking-tight
+            bg-gradient-to-br from-white to-white/70
+            bg-clip-text text-transparent
+            transition duration-300
+            ${v.text}
+          `}
+          >
+            {value}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

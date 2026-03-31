@@ -108,7 +108,7 @@ export const utilitiesData: UtilityItem[] = [
 
 export default function UtilitiesSection() {
   return (
-    <section className="relative py-20">
+    <section className="relative py-20" id="utilities">
       {/* background gradient */}
       <div className="absolute inset-0 bg-gradient-to-b from-transparent via-white/[0.02] to-transparent pointer-events-none" />
 
@@ -136,6 +136,7 @@ export default function UtilitiesSection() {
     </section>
   );
 }
+
 function UtilityCard({ item }: { item: UtilityItem }) {
   const Icon = item.icon;
 
@@ -155,8 +156,13 @@ function UtilityCard({ item }: { item: UtilityItem }) {
           "relative rounded-xl p-5",
           "bg-[rgba(3,7,18,0.7)] backdrop-blur-xl",
           "border border-white/10",
-          "hover:scale-[1.01] hover:border-white/20",
           "overflow-hidden transition-all ease-in-out duration-300",
+
+          // 👇 ADD THIS
+          "shadow-[0_0_12px_rgba(34,211,238,0.08)]",
+          "hover:shadow-[0_0_10px_rgba(34,211,238,0.25),0_0_18px_rgba(59,130,246,0.15)]",
+
+          "hover:scale-[1.01] hover:border-white/20",
         )}
       >
         {/* 💡 INNER RADIAL GLOW (ALWAYS ON) */}

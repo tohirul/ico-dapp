@@ -30,7 +30,7 @@ export function SiteHeader({ tokenName, navigation }: SiteHeaderProps) {
               </div>
               <div>
                 <p className="font-display text-md leading-none text-white">
-                  {tokenName}
+                  OGT COIN
                 </p>
                 <p className="text-[10px] font-semibold hidden lg:block uppercase tracking-[0.30em] text-white/38">
                   optivision global technologies
@@ -44,7 +44,7 @@ export function SiteHeader({ tokenName, navigation }: SiteHeaderProps) {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className="text-sm font-medium text-white/58 transition hover:text-accent"
+                  className="text-md font-medium text-white/58 transition hover:text-accent"
                 >
                   {item.label}
                 </Link>
