@@ -5,14 +5,21 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/library/button";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 
 /* ================= CONFIG ================= */
 
 const DEMO_USERS = [
-  { email: "alice@ogt.com", password: "123456", name: "Alice" },
-  { email: "bob@ogt.com", password: "123456", name: "Bob" },
-  { email: "charlie@ogt.com", password: "123456", name: "Charlie" },
-  { email: "jhonnt@ogt.com", password: "123456", name: "jhonny" },
+  { email: "alice@ogt.com", password: "123456", name: "Alice", role: "user" },
+  { email: "bob@ogt.com", password: "123456", name: "Bob", role: "user" },
+  {
+    email: "charlie@ogt.com",
+    password: "123456",
+    name: "Charlie",
+    role: "user",
+  },
+  { email: "jhonnt@ogt.com", password: "123456", name: "jhonny", role: "user" },
 ];
 
 /* ================= PAGE ================= */
@@ -118,19 +125,24 @@ function RightPanel() {
     setPassword(user.password);
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  const { login } = useAuth();
+const router = useRouter();
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-
-    if (email === "admin@ogt.com" && password === "admin") {
-      alert("Admin login");
-      return;
+    const loggedUser = await login(email, password);
+    if (loggedUser) {
+      // successful login – redirect based on role
+      if (loggedUser.role === "admin") {
+        // admin gets sent to /admin
+        router.replace("/admin");
+      } else {
+        // regular user goes to /users (or /dashboard)
+        router.replace("/users");
+      }
+    } else {
+      alert("Invalid credentials");
     }
-
-    const user = DEMO_USERS.find(
-      (u) => u.email === email && u.password === password,
-    );
-
-    alert(user ? `Welcome ${user.name}` : "Invalid credentials");
   }
 
   return (

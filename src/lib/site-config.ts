@@ -10,7 +10,7 @@ export interface NavCTA {
   label: string;
   href: string;
   external?: boolean;
-  variant: "primary" | "outline" | "ghost";
+  variant: "ghost" | "cta" | "outline" | "neon";
 }
 
 export interface NavigationConfig {
@@ -157,12 +157,12 @@ export function createSiteConfig(
         {
           label: "Sign In",
           href: "/signin",
-          variant: "outline",
+          variant: "neon",
         },
         {
           label: "Dashboard",
           href: "/dashboard",
-          variant: "primary",
+          variant: "neon",
         },
         {
           label: "Logout",

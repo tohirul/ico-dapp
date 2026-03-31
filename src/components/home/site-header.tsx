@@ -1,8 +1,11 @@
+"use client";
 import Image from "next/image";
 import Link from "next/link";
 
 import type { NavigationConfig } from "@/lib/site-config";
 import Container from "../shared/container";
+import { useAuth } from "@/context/AuthContext";
+import { Button } from "../library/button";
 
 interface SiteHeaderProps {
   tokenName: string;
@@ -10,6 +13,7 @@ interface SiteHeaderProps {
 }
 
 export function SiteHeader({ tokenName, navigation }: SiteHeaderProps) {
+  const { user, logout } = useAuth();
   return (
     <header className="sticky top-0 z-30">
       <Container>
@@ -53,30 +57,39 @@ export function SiteHeader({ tokenName, navigation }: SiteHeaderProps) {
 
             {/* 🔷 RIGHT: ACTIONS */}
             <div className="hidden items-center gap-3 md:flex">
-              <div className="hidden items-center gap-3 md:flex">
-                {navigation.ctas.map((cta) => {
+              {navigation.ctas
+                .filter((cta) => {
+                  if (cta.label === "Sign In") return !user;
+                  if (cta.label === "Dashboard") return !!user;
+                  if (cta.label === "Logout") return !!user;
+                  return true;
+                })
+                .map((cta) => {
                   const base =
                     "inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-semibold transition";
-
                   const variants = {
                     primary: "bg-accent text-black hover:opacity-90",
                     outline:
                       "border border-white/10 bg-white/4 text-white hover:border-accent hover:text-accent",
                     ghost: "text-white/50 hover:text-white",
                   };
-
                   return (
-                    <Link
+                    <Button
                       key={cta.label}
-                      href={cta.href}
-                      target={cta.external ? "_blank" : undefined}
-                      className={`${base} ${variants[cta.variant]}`}
+                      variant={cta?.variant}
+                      radius="full"
+                      size="sm"
                     >
-                      {cta.label}
-                    </Link>
+                      <Link
+                        href={cta.href}
+                        target={cta.external ? "_blank" : undefined}
+                        className={`${base}`}
+                      >
+                        {cta.label}
+                      </Link>
+                    </Button>
                   );
                 })}
-              </div>
             </div>
 
             {/* 🔷 MOBILE MENU BUTTON (placeholder) */}

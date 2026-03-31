@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-
+import "./globals.css";
 import "@fontsource/ibm-plex-sans/400.css";
 import "@fontsource/ibm-plex-sans/500.css";
 import "@fontsource/ibm-plex-sans/600.css";
@@ -10,7 +10,8 @@ import "@fontsource/syne/600.css";
 import "@fontsource/syne/700.css";
 import "@fontsource/syne/800.css";
 
-import "@/app/globals.css";
+import { AuthProvider } from "@/context/AuthContext";
+
 import { getPublicEnv } from "@/lib/env";
 import { JetBrains_Mono, Figtree } from "next/font/google";
 import { cn } from "@/lib/utils";
@@ -58,7 +59,9 @@ export default function RootLayout({
       lang="en"
       className={cn(jetbrainsMono.variable, "font-sans", figtree.variable)}
     >
-      <body>{children}</body>
+      <body className="relative min-h-screen">
+        <AuthProvider>{children}</AuthProvider>
+      </body>
     </html>
   );
 }
