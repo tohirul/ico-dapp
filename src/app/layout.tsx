@@ -15,9 +15,12 @@ import { getPublicEnv } from "@/lib/env";
 import { JetBrains_Mono, Figtree } from "next/font/google";
 import { cn } from "@/lib/utils";
 
-const figtree = Figtree({subsets:['latin'],variable:'--font-sans'});
+const figtree = Figtree({ subsets: ["latin"], variable: "--font-sans" });
 
-const jetbrainsMono = JetBrains_Mono({subsets:['latin'],variable:'--font-mono'});
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+});
 
 const env = getPublicEnv();
 
@@ -35,12 +38,12 @@ function getMetadataBase() {
 
 export const metadata: Metadata = {
   metadataBase: getMetadataBase(),
-  title: `${env.tokenName} Presale`,
-  description: `${env.tokenName} is a modernized ${env.blockchain} ICO experience rebuilt with Next.js App Router, TypeScript, and Tailwind CSS v4.`,
-  applicationName: env.tokenName,
+  title: `OGT Coin`,
+  description: `OGT Coin is a modernized ${env.blockchain} ICO experience rebuilt with Next.js App Router, TypeScript, and Tailwind CSS v4.`,
+  applicationName: `OGT Coin`,
   openGraph: {
-    title: `${env.tokenName} Presale`,
-    description: `${env.tokenName} control room for token sale operations and launch readiness.`,
+    title: `OGT Coin`,
+    description: `OGT Coin control room for token sale operations and launch readiness.`,
     images: ["/thumbnail/pro-blockchain.jpg"],
   },
 };
@@ -51,7 +54,10 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html lang="en" className={cn( jetbrainsMono.variable, "font-sans", figtree.variable)}>
+    <html
+      lang="en"
+      className={cn(jetbrainsMono.variable, "font-sans", figtree.variable)}
+    >
       <body>{children}</body>
     </html>
   );
