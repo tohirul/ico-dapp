@@ -1,5 +1,5 @@
-import DashboardPage from "@/app/dashboard/page";
+import Overview from "./Overview";
 
 export default function AdminDashboardPage() {
-  return <DashboardPage />;
+  return <Overview />;
 }

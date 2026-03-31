@@ -1,14 +1,15 @@
 "use client";
-
-import { ReactNode, useState } from "react";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import clsx from "clsx";
 
-export default function AdminLayout({ children }: { children: ReactNode }) {
+import { ReactNode, useState } from "react";
+
+export default function UsersLayout({ children }: { children: ReactNode }) {
   const [expanded, setExpanded] = useState(true);
+
   return (
-    <RequireAuth requiredRole="admin">
+    <RequireAuth requiredRole="user">
       <div className="flex">
         <Sidebar expanded={expanded} setExpanded={setExpanded} />
 

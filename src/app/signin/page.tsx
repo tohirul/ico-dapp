@@ -126,7 +126,7 @@ function RightPanel() {
   }
 
   const { login } = useAuth();
-const router = useRouter();
+  const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -138,7 +138,7 @@ const router = useRouter();
         router.replace("/admin");
       } else {
         // regular user goes to /users (or /dashboard)
-        router.replace("/users");
+        router.replace("/dashboard");
       }
     } else {
       alert("Invalid credentials");

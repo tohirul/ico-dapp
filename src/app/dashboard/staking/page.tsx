@@ -1,0 +1,344 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
+import clsx from "clsx";
+
+// ----------------------
+// Demo Data
+// ----------------------
+
+type Pool = {
+  id: string;
+  name: string;
+  apy: number;
+  lockDays: number;
+  minStake: number;
+  maxStake: number;
+  tvl: number;
+  utilization: number;
+};
+type StakeAction = "Stake" | "Unstake" | "Claim";
+type HistoryItem = {
+  id: string;
+  date: string;
+  pool: string;
+  type: StakeAction;
+  amount: string;
+  rewards: string;
+};
+const typeStyles: Record<StakeAction, string> = {
+  Stake: "bg-green-500/10 text-green-400",
+  Unstake: "bg-red-500/10 text-red-400",
+  Claim: "bg-blue-500/10 text-blue-400",
+};
+const pools: Pool[] = [
+  {
+    id: "1",
+    name: "ETH Pool",
+    apy: 12.5,
+    lockDays: 30,
+    minStake: 0.1,
+    maxStake: 100,
+    tvl: 1200000,
+    utilization: 65,
+  },
+  {
+    id: "2",
+    name: "USDT Stable",
+    apy: 8.2,
+    lockDays: 14,
+    minStake: 100,
+    maxStake: 50000,
+    tvl: 800000,
+    utilization: 45,
+  },
+  {
+    id: "3",
+    name: "OGT Premium",
+    apy: 25.0,
+    lockDays: 60,
+    minStake: 50,
+    maxStake: 10000,
+    tvl: 450000,
+    utilization: 82,
+  },
+];
+
+const historyData = [
+  {
+    id: 1,
+    date: "2026-03-20",
+    pool: "BNB Pool",
+    type: "Stake",
+    amount: 1.2,
+    rewards: 0,
+  },
+  {
+    id: 2,
+    date: "2026-03-22",
+    pool: "OGT Premium",
+    type: "Claim",
+    amount: 0,
+    rewards: 12,
+  },
+  {
+    id: 3,
+    date: "2026-03-25",
+    pool: "USDT Stable",
+    type: "Unstake",
+    amount: 500,
+    rewards: 8,
+  },
+];
+
+// ----------------------
+// Components
+// ----------------------
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-lg font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function ProgressBar({ value }: { value: number }) {
+  return (
+    <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+      <div
+        className="h-full bg-primary transition-all"
+        style={{ width: `${value}%` }}
+      />
+    </div>
+  );
+}
+
+function PoolCard({ pool }: { pool: Pool }) {
+  return (
+    <motion.div
+      whileHover={{ scale: 1.03 }}
+      className="p-5 rounded-xl bg-white/5 border border-white/10 space-y-4"
+    >
+      <div className="flex justify-between">
+        <h3 className="font-semibold">{pool.name}</h3>
+        <span className="text-green-400">{pool.apy}% APY</span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-sm">
+        <div>Lock: {pool.lockDays}d</div>
+        <div>Min: {pool.minStake}</div>
+        <div>Max: {pool.maxStake}</div>
+        <div>TVL: ${pool.tvl.toLocaleString()}</div>
+      </div>
+
+      <div>
+        <ProgressBar value={pool.utilization} />
+        <p className="text-xs mt-1 text-muted-foreground">
+          {pool.utilization}% utilized
+        </p>
+      </div>
+
+      <div className="flex gap-2">
+        <button className="flex-1 py-2 rounded bg-primary text-white">
+          Stake
+        </button>
+        <button className="flex-1 py-2 rounded bg-white/10">Unstake</button>
+        <button className="flex-1 py-2 rounded bg-white/10">Claim</button>
+      </div>
+    </motion.div>
+  );
+}
+
+function RewardsCounter() {
+  const [rewards, setRewards] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRewards((prev) => prev + 0.0023);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="p-5 rounded-xl bg-white/5 border border-white/10">
+      <p className="text-sm text-muted-foreground">Live Rewards</p>
+      <p className="text-2xl font-bold">{rewards.toFixed(4)}</p>
+      <p className="text-xs text-green-400">+0.0023/sec</p>
+    </div>
+  );
+}
+
+const FILTERS = ["All", "Stake", "Unstake", "Claim"];
+
+function HistoryTable() {
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("All");
+
+  const filteredData = historyData.filter((item) => {
+    const matchesSearch = item.pool
+      .toLowerCase()
+      .includes(search.toLowerCase());
+
+    const matchesFilter = filter === "All" || item.type === filter;
+
+    return matchesSearch && matchesFilter;
+  });
+
+  return (
+    <div className="relative p-6 rounded-2xl bg-white/[0.04] border border-white/[0.08] backdrop-blur-xl space-y-5">
+      {/* HEADER */}
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+        <div>
+          <h3 className="text-lg font-semibold tracking-tight">
+            Staking History
+          </h3>
+          <p className="text-xs text-muted-foreground/70">
+            Track all staking interactions
+          </p>
+        </div>
+
+        {/* CONTROLS */}
+        <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+          {/* SEARCH */}
+          <div className="relative">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search pool..."
+              className="pl-3 pr-3 py-2 rounded-lg bg-white/[0.06] border border-white/[0.08] text-sm outline-none 
+              focus:ring-2 focus:ring-primary/40 transition-all w-[180px]"
+            />
+          </div>
+
+          {/* FILTER PILLS */}
+          <div className="flex gap-1 p-1 rounded-lg bg-white/[0.04] border border-white/[0.06]">
+            {FILTERS.map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={clsx(
+                  "px-3 py-1 text-xs rounded-md transition-all",
+                  filter === f
+                    ? "bg-white/10 text-white shadow-inner"
+                    : "text-muted-foreground hover:text-white",
+                )}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* TABLE */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border-separate border-spacing-y-2">
+          <thead>
+            <tr className="text-xs text-muted-foreground/60 uppercase">
+              <th className="text-left px-3">Date</th>
+              <th className="text-left px-3">Pool</th>
+              <th className="text-center px-3">Type</th>
+              <th className="text-center px-3">Amount</th>
+              <th className="text-center px-3">Rewards</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {filteredData.length === 0 ? (
+              <tr>
+                <td colSpan={5}>
+                  <div className="flex flex-col items-center justify-center py-10 text-muted-foreground/60">
+                    <p className="text-sm">No transactions found</p>
+                    <p className="text-xs opacity-60">
+                      Try adjusting search or filters
+                    </p>
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              filteredData.map((item) => {
+                const typeStyles = {
+                  Stake: "bg-green-500/10 text-green-400",
+                  Unstake: "bg-red-500/10 text-red-400",
+                  Claim: "bg-blue-500/10 text-blue-400",
+                };
+
+                return (
+                  <tr
+                    key={item.id}
+                    className="bg-white/[0.03] hover:bg-white/[0.06] transition-all rounded-xl"
+                  >
+                    <td className="px-3 py-3 rounded-l-xl text-muted-foreground/80">
+                      {item.date}
+                    </td>
+
+                    <td className="px-3 font-medium">{item.pool}</td>
+
+                    <td className="px-3 text-center">
+                      <span
+                        className={clsx(
+                          "px-2.5 py-1 rounded-md text-xs font-medium",
+                          typeStyles[item.type as keyof typeof typeStyles],
+                        )}
+                      >
+                        {item.type}
+                      </span>
+                    </td>
+
+                    <td className="px-3 text-center font-semibold">
+                      {item.amount}
+                    </td>
+
+                    <td className="px-3 text-center text-green-400 font-medium rounded-r-xl">
+                      {item.rewards}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ----------------------
+// Main Page
+// ----------------------
+
+export default function StakingPage() {
+  const totalTVL = useMemo(() => pools.reduce((acc, p) => acc + p.tvl, 0), []);
+
+  return (
+    <div className="space-y-8 p-6">
+      {/* Header Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard label="Total TVL" value={`$${totalTVL.toLocaleString()}`} />
+        <StatCard label="Your Stake" value="$12,450" />
+        <StatCard label="Pending Rewards" value="$320" />
+        <StatCard label="Avg APY" value="14.2%" />
+      </div>
+
+      {/* Rewards */}
+      <RewardsCounter />
+
+      {/* Pools */}
+      <div>
+        <h2 className="text-xl font-semibold mb-4">Staking Pools</h2>
+        <div className="grid md:grid-cols-3 gap-4">
+          {pools.map((pool) => (
+            <PoolCard key={pool.id} pool={pool} />
+          ))}
+        </div>
+      </div>
+
+      {/* History */}
+      <HistoryTable />
+    </div>
+  );
+}
