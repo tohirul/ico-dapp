@@ -10,10 +10,12 @@ interface RequireAuthProps {
 }
 
 export const RequireAuth = ({ requiredRole, children }: RequireAuthProps) => {
-  const { user, logout } = useAuth();
+  const { user, isLoading, logout } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
+    if (isLoading) return;
+
     // No user → go to sign‑in
     if (!user) {
       router.replace("/signin");
@@ -31,7 +33,10 @@ export const RequireAuth = ({ requiredRole, children }: RequireAuthProps) => {
       }
     }
     // else everything is fine
-  }, [user, requiredRole, router]);
+  }, [user, isLoading, requiredRole, router]);
+
+  // Show nothing while loading
+  if (isLoading) return null;
 
   // Render children only when the auth check passed
   if (!user) return null;

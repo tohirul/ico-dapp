@@ -12,6 +12,7 @@ export interface User {
 
 interface AuthContextProps {
   user: User | null;
+  isLoading: boolean;
   login: (email: string, password: string) => Promise<User | null>;
   logout: () => void;
 }
@@ -20,11 +21,13 @@ const AuthContext = createContext<AuthContextProps | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   // hydrate from storage on mount (client‑side only)
   useEffect(() => {
     const stored = typeof window !== "undefined" && localStorage.getItem("auth_user");
     if (stored) setUser(JSON.parse(stored));
+    setIsLoading(false);
   }, []);
 
   const login = async (email: string, password: string) => {
@@ -45,7 +48,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

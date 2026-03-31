@@ -15,7 +15,7 @@ export default function UsersLayout({ children }: { children: ReactNode }) {
 
         <main
           className={clsx(
-            "flex-1 p-6 transition-all duration-300",
+            "flex-1 transition-all duration-300",
             expanded ? "ml-[280px]" : "ml-[88px]",
           )}
         >

@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import clsx from "clsx";
 import { Button } from "../library/button";
+import Link from "next/link";
 
 /* ================= CONFIG ================= */
 
@@ -276,17 +277,19 @@ function PricingInfo({ payToken }: { payToken: Token }) {
 
 function Action() {
   return (
-    <div className="w-full pt-6 flex justify-center">
-      <Button
-        variant="neon"
-        magnetic={false}
-        size="lg"
-        radius="full"
-        className="w-lg mx-auto"
-      >
-        Buy Now
-      </Button>
-    </div>
+    <Link href="/dashboard/swap" className="w-full">
+      <div className="w-full pt-6 flex justify-center">
+        <Button
+          variant="neon"
+          magnetic={false}
+          size="lg"
+          radius="full"
+          className="w-lg mx-auto"
+        >
+          Buy Now
+        </Button>
+      </div>
+    </Link>
   );
 }
 

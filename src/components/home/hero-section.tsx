@@ -50,11 +50,11 @@ export function HeroSection() {
 
           <div className="flex gap-3">
             <Button variant="neon" radius="full" size="md">
-              <Link href="/stake">Start Staking</Link>
+              <Link href="/dashboard/staking">Start Staking</Link>
             </Button>
 
             <Button variant="outline" radius="full" size="md">
-              <Link href="/buy">Buy OGT</Link>
+              <Link href="/dashboard/swap">Buy OGT</Link>
             </Button>
           </div>
         </div>

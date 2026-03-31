@@ -68,7 +68,7 @@ export const Sidebar = ({
   expanded: boolean;
   setExpanded: (v: boolean) => void;
 }) => {
-  const { user, logout } = useAuth();
+  const { user, isLoading, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -76,6 +76,14 @@ export const Sidebar = ({
     logout();
     router.replace("/");
   };
+
+  if (isLoading) {
+    return (
+      <div className="fixed left-0 top-0 h-screen z-40 w-[88px] flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="fixed left-0 top-0 h-screen z-40">
@@ -109,31 +117,33 @@ export const Sidebar = ({
 
 function SidebarHeader({ expanded }: { expanded: boolean }) {
   return (
-    <div className="flex items-center gap-3 px-3 py-4 border-b border-white/10">
-      <div className="relative w-9 h-9 rounded-xl overflow-hidden bg-white/10 flex items-center justify-center">
-        <Image
-          src="/logo-02.png"
-          alt="OGT"
-          width={128}
-          height={128}
-          className="object-cover relative z-10 scale-190"
-        />
-        <div className="absolute inset-0 bg-primary/20 blur-md opacity-70" />
-      </div>
+    <Link href="/">
+      <div className="flex items-center gap-3 px-3 py-4 border-b border-white/10">
+        <div className="relative w-9 h-9 rounded-xl overflow-hidden bg-white/10 flex items-center justify-center">
+          <Image
+            src="/logo-02.png"
+            alt="OGT"
+            width={128}
+            height={128}
+            className="object-cover relative z-10 scale-190"
+          />
+          <div className="absolute inset-0 bg-primary/20 blur-md opacity-70" />
+        </div>
 
-      <AnimatePresence>
-        {expanded && (
-          <motion.span
-            initial={{ opacity: 0, x: -6 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -6 }}
-            className="font-semibold tracking-tight"
-          >
-            OGT COIN
-          </motion.span>
-        )}
-      </AnimatePresence>
-    </div>
+        <AnimatePresence>
+          {expanded && (
+            <motion.span
+              initial={{ opacity: 0, x: -6 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -6 }}
+              className="font-semibold tracking-tight"
+            >
+              OGT COIN
+            </motion.span>
+          )}
+        </AnimatePresence>
+      </div>
+    </Link>
   );
 }
 

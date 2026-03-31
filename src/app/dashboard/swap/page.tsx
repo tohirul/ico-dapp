@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import router from "next/router";
+import Container from "@/components/shared/container";
 
 /* =========================
    MOCK DATA
@@ -106,17 +107,19 @@ const mockTx = [
 
 export default function TradePage() {
   return (
-    <div className="p-6 space-y-6">
-      <h1 className="text-2xl font-semibold">Trade & Buy</h1>
+    <Container className="py-12 space-y-6">
+      <div className=" space-y-6">
+        <h1 className="text-2xl font-semibold">Trade & Buy</h1>
 
-      <div className="flex gap-6">
-        <SwapCard />
-        <PackagesCard />
+        <div className="flex gap-6">
+          <SwapCard />
+          <PackagesCard />
+        </div>
+
+        <SwapHistoryTable />
+        <TransactionHistoryTable />
       </div>
-
-      <SwapHistoryTable />
-      <TransactionHistoryTable />
-    </div>
+    </Container>
   );
 }
 

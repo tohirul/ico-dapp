@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
+import { X } from "lucide-react";
+import { Button } from "@/components/library/button";
 
 // ----------------------
 // Demo Data
@@ -20,12 +22,12 @@ type Pool = {
 };
 type StakeAction = "Stake" | "Unstake" | "Claim";
 type HistoryItem = {
-  id: string;
+  id: number;
   date: string;
   pool: string;
   type: StakeAction;
-  amount: string;
-  rewards: string;
+  amount: number | string;
+  rewards: number | string;
 };
 const typeStyles: Record<StakeAction, string> = {
   Stake: "bg-green-500/10 text-green-400",
@@ -65,7 +67,7 @@ const pools: Pool[] = [
   },
 ];
 
-const historyData = [
+const initialHistoryData: HistoryItem[] = [
   {
     id: 1,
     date: "2026-03-20",
@@ -174,11 +176,11 @@ function RewardsCounter() {
 
 const FILTERS = ["All", "Stake", "Unstake", "Claim"];
 
-function HistoryTable() {
+function HistoryTable({ historyItems }: { historyItems: HistoryItem[] }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
 
-  const filteredData = historyData.filter((item) => {
+  const filteredData = historyItems.filter((item) => {
     const matchesSearch = item.pool
       .toLowerCase()
       .includes(search.toLowerCase());
@@ -308,11 +310,216 @@ function HistoryTable() {
 }
 
 // ----------------------
+// Modal Form
+// ----------------------\
+
+export function StakeModal({
+  isOpen,
+  onClose,
+  onAddTransaction,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onAddTransaction: (item: HistoryItem) => void;
+}) {
+  const [pool, setPool] = useState("ETH Pool");
+  const [amount, setAmount] = useState("");
+  const [type, setType] = useState<StakeAction>("Stake");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!amount || parseFloat(amount) <= 0) return;
+
+    const newItem: HistoryItem = {
+      id: Date.now(),
+      date: new Date().toISOString().split("T")[0],
+      pool,
+      type,
+      amount: parseFloat(amount),
+      rewards: 0,
+    };
+
+    onAddTransaction(newItem);
+    onClose();
+    setAmount("");
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <>
+          {/* BACKDROP */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md"
+            onClick={onClose}
+          />
+
+          {/* MODAL */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92, y: 40 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: 40 }}
+            transition={{ type: "spring", stiffness: 120, damping: 18 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          >
+            <div
+              className={clsx(
+                "relative w-full max-w-md",
+                "rounded-2xl p-[1px]",
+                "bg-gradient-to-br from-white/20 via-white/5 to-transparent",
+              )}
+            >
+              <div
+                className={clsx(
+                  "rounded-2xl p-6 space-y-6",
+                  "bg-[#0B0F17]/90 backdrop-blur-2xl",
+                  "border border-white/10",
+                  "shadow-[0_10px_40px_rgba(0,0,0,0.6)]",
+                )}
+              >
+                {/* HEADER */}
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h2 className="text-xl font-semibold">Manage Stake</h2>
+                    <p className="text-sm text-white/50 mt-1">
+                      Stake, unstake or claim rewards instantly
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={onClose}
+                    className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                {/* FORM */}
+                <form onSubmit={handleSubmit} className="space-y-6">
+                  {/* TYPE SWITCH */}
+                  <div className="bg-white/[0.03] p-1 rounded-xl flex border border-white/[0.06]">
+                    {(["Stake", "Unstake", "Claim"] as StakeAction[]).map(
+                      (t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setType(t)}
+                          className={clsx(
+                            "flex-1 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
+                            "relative",
+                            type === t
+                              ? "bg-primary text-black shadow-[0_0_12px_rgba(59,130,246,0.4)]"
+                              : "text-white/40 hover:bg-white/[0.05]",
+                          )}
+                        >
+                          {t}
+                        </button>
+                      ),
+                    )}
+                  </div>
+
+                  {/* POOL */}
+                  <div>
+                    <label className="text-sm text-white/50 mb-2 block">
+                      Select Pool
+                    </label>
+                    <select
+                      value={pool}
+                      onChange={(e) => setPool(e.target.value)}
+                      className={clsx(
+                        "w-full px-4 py-3 rounded-xl",
+                        "bg-white/[0.03]",
+                        "border border-white/[0.06]",
+                        "text-white/90",
+                        "focus:ring-2 focus:ring-primary/40",
+                        "focus:border-primary/40",
+                        "outline-none transition-all",
+                      )}
+                    >
+                      {pools.map((p) => (
+                        <option
+                          key={p.id}
+                          value={p.name}
+                          className="bg-[#0B0F17]"
+                        >
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* AMOUNT */}
+                  <div>
+                    <label className="text-sm text-white/50 mb-2 block">
+                      Amount
+                    </label>
+
+                    <div className="relative group">
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        placeholder="0.00"
+                        className={clsx(
+                          "w-full px-4 py-3 rounded-xl pr-16",
+                          "bg-white/[0.03]",
+                          "border border-white/[0.06]",
+                          "text-white/90 placeholder:text-white/30",
+                          "focus:ring-2 focus:ring-primary/40",
+                          "focus:border-primary/40",
+                          "outline-none transition-all",
+                        )}
+                        required
+                      />
+
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 text-sm">
+                        OGT
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* CTA */}
+                  <button
+                    type="submit"
+                    className={clsx(
+                      "w-full py-3 rounded-xl font-semibold",
+                      "bg-primary",
+                      "text-black",
+                      "transition-all duration-200",
+                      "hover:bg-primary/90",
+                      "hover:shadow-[0_0_18px_rgba(59,130,246,0.45)]",
+                      "active:scale-[0.97]",
+                    )}
+                  >
+                    Confirm Transaction
+                  </button>
+                </form>
+              </div>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
+// ----------------------
 // Main Page
 // ----------------------
 
 export default function StakingPage() {
   const totalTVL = useMemo(() => pools.reduce((acc, p) => acc + p.tvl, 0), []);
+  const [historyItems, setHistoryItems] =
+    useState<HistoryItem[]>(initialHistoryData);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const handleAddTransaction = (item: HistoryItem) => {
+    setHistoryItems((prev) => [item, ...prev]);
+  };
 
   return (
     <div className="space-y-8 p-6">
@@ -338,7 +545,25 @@ export default function StakingPage() {
       </div>
 
       {/* History */}
-      <HistoryTable />
+      <HistoryTable historyItems={historyItems} />
+
+      {/* Stake Now Button */}
+      <Button
+        variant="neon"
+        radius="full"
+        size="md"
+        onClick={() => setIsModalOpen(true)}
+        className="fixed bottom-6 right-6 transition z-40"
+      >
+        Stake Now
+      </Button>
+
+      {/* Modal */}
+      <StakeModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onAddTransaction={handleAddTransaction}
+      />
     </div>
   );
 }

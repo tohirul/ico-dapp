@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import clsx from "clsx";
 import { Bars } from "./Bars";
+import Container from "@/components/shared/container";
 
 /* ================= DATA ================= */
 
@@ -18,7 +19,7 @@ const stats = [
 
 export default function DashboardHome() {
   return (
-    <div className="p-6 space-y-6">
+    <Container className="py-12 space-y-6">
       <KPI stats={stats} />
 
       <section className="grid lg:grid-cols-3 gap-6">
@@ -117,7 +118,7 @@ export default function DashboardHome() {
           />
         </Card>
       </section>
-    </div>
+    </Container>
   );
 }
 

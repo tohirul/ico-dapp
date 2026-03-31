@@ -57,6 +57,7 @@ const sizes = {
   md: "h-10 px-6 text-sm",
   lg: "h-12 px-8 text-base",
   xl: "h-14 px-10 text-lg",
+  full: "h-10 w-full px-6 text-sm",
 };
 
 const radiusMap = {
